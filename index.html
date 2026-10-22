@@ -12,7 +12,7 @@
 
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Cuaderno de evaluación</title>
-<!-- Versión web generada desde la versión de escritorio 1.6.2 -->
+<!-- Versión web generada desde la versión de escritorio 1.6.3 -->
 <style>
 :root{--accent:#2563eb;--bg:#f4f6f8;--card:#fff;--text:#172033;--muted:#657084;--line:#dfe4ea;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--shadow:0 8px 24px rgba(15,23,42,.08)}
 *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
@@ -801,8 +801,10 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
 
 </script>
 <script>/* calendar-model.js */
-/* Calendar of the programme. Dates of sessions are never stored: they are computed by placing the
-   ordered sessions on the group's teaching days, so delaying or advancing is a single change. */
+/* Calendar of the programme. Dates of ordinary sessions are never stored: they are computed by placing the
+   ordered sessions on the group's teaching days, so delaying or advancing is a single change.
+   Exception: a session with a date written in Estructura (within the school year) is a fixed-date session:
+   it keeps that day, outside the order, and the other sessions flow around it. */
 (function(root,factory){
   const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CalendarModel=api;
 })(typeof globalThis==='object'?globalThis:this,function(){
@@ -895,25 +897,48 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     for(let d=school.start;d<=last;d=addDays(d,1))if(wd.has(weekday(d))&&!closed.has(d))days.push(d);
     return days;
   }
+  // Fecha escrita en Estructura (dd/mm/aaaa, o aaaa-mm-dd). Solo cuenta si cae dentro del curso escolar,
+  // para que fechas antiguas de otros cursos no alteren la planificación.
+  function storedDate(value){
+    if(typeof value!=='string')return '';const v=value.trim(),m=v.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return iso(m?`${m[3]}-${m[2]}-${m[1]}`:v);
+  }
+  function fixedDate(se,school){const d=storedDate(se.date);return d&&d>=school.start&&d<=school.end?d:''}
   function plan(c,school,today=''){
     const cal=c.calendar;if(!school||!cal||!hasSessions(c))return null;
     const days=teachingDays(school,cal),limit=addDays(cal.end,-cal.reserveDays),lost=new Map(cal.noSession.map(x=>[x.date,x.reason||''])),doubles=new Set(cal.doubles.map(x=>x.date));
     const slots=[];for(const d of days){if(lost.has(d))continue;slots.push(d);if(doubles.has(d))slots.push(d)}
-    const anchors=new Map(cal.anchors.map(a=>[a.sessionId,a.date])),list=sessions(c),placed=[],conflicts=[];let i=0;
+    const taken=slots.map(()=>false),anchors=new Map(cal.anchors.map(a=>[a.sessionId,a.date])),list=sessions(c),placed=[],conflicts=[],fixedDates=new Map();
+    const needOf=se=>{const t=cal.tracking[se.id]||{};return t.status==='dropped'?0:t.status==='partial'?2:1};
+    // 1.ª pasada: las sesiones con fecha fija (fecha de Estructura) ocupan su día, fuera del orden de la programación.
+    for(const {se} of list){
+      const need=needOf(se),fixed=fixedDate(se,school);if(!need||!fixed)continue;
+      const j=slots.findIndex((d,k)=>!taken[k]&&d===fixed);
+      if(j<0){conflicts.push({sessionId:se.id,date:fixed,fixed:true,reason:!days.includes(fixed)?'no es un día de clase del grupo; se planifica en su orden':lost.has(fixed)?'ese día está marcado sin clase; se planifica en su orden':'ya hay otra sesión con fecha fija ese día; se planifica en su orden'});continue}
+      const dates=[slots[j]];taken[j]=true;
+      for(let k=j+1;dates.length<need&&k<slots.length;k++)if(!taken[k]){taken[k]=true;dates.push(slots[k])}
+      fixedDates.set(se.id,{fixed,dates});
+    }
+    // 2.ª pasada: el resto de sesiones, en orden, en las clases que quedan libres.
+    let i=0;const skip=()=>{while(i<slots.length&&taken[i])i++};
     for(const {sd,se} of list){
-      const t=cal.tracking[se.id]||{},need=t.status==='dropped'?0:t.status==='partial'?2:1,anchor=anchors.get(se.id),entry={sessionId:se.id,blockId:sd.id,block:sd.title,num:se.num,title:se.title||'',status:t.status||'',note:t.note||'',anchor:anchor||'',dates:[]};
-      if(need&&anchor){
-        while(i<slots.length&&slots[i]<anchor)i++;
-        if(slots[i]!==anchor)conflicts.push({sessionId:se.id,date:anchor,reason:days.includes(anchor)?(lost.has(anchor)?'ese día está marcado sin sesión':'las sesiones anteriores ocupan ya esa fecha'):'no es un día de clase del grupo'});
+      const t=cal.tracking[se.id]||{},need=needOf(se),anchor=anchors.get(se.id),fx=fixedDates.get(se.id),entry={sessionId:se.id,blockId:sd.id,block:sd.title,num:se.num,title:se.title||'',status:t.status||'',note:t.note||'',anchor:fx?'':anchor||'',fixed:fx?fx.fixed:'',dates:fx?fx.dates:[]};
+      if(!fx){
+        if(need&&anchor){
+          skip();while(i<slots.length&&(taken[i]||slots[i]<anchor))i++;
+          if(slots[i]!==anchor)conflicts.push({sessionId:se.id,date:anchor,reason:days.includes(anchor)?(lost.has(anchor)?'ese día está marcado sin sesión':'las sesiones anteriores ocupan ya esa fecha'):'no es un día de clase del grupo'});
+        }
+        for(let k=0;k<need;k++){skip();if(i>=slots.length)break;taken[i]=true;entry.dates.push(slots[i++])}
       }
-      for(let k=0;k<need&&i<slots.length;k++)entry.dates.push(slots[i++]);
       entry.unplaced=need>0&&entry.dates.length<need;entry.beyondLimit=entry.dates.some(d=>d>limit);
       placed.push(entry);
     }
     const capacity=slots.filter(d=>d<=limit).length,needed=placed.reduce((n,s)=>n+(s.status==='dropped'?0:s.status==='partial'?2:1),0);
     const lastDate=placed.flatMap(s=>s.dates).sort().at(-1)||'';
     const pending=today?placed.filter(s=>s.dates.length&&s.dates[0]<today&&!s.status):[];
-    const current=today?placed.filter(s=>s.dates.some(d=>d<=today)).at(-1)||null:null;
+    // Sesión actual: la de fecha más reciente hasta hoy (las de fecha fija pueden ir fuera de orden).
+    let current=null,currentDate='';
+    if(today)for(const s of placed)for(const d of s.dates)if(d<=today&&d>=currentDate){currentDate=d;current=s}
     return {days,slots,limit,lost:[...lost].map(([date,reason])=>({date,reason})),doubles:[...doubles],sessions:placed,conflicts,capacity,needed,margin:capacity-needed,lastDate,
       late:!!lastDate&&lastDate>limit||placed.some(s=>s.unplaced),pending,current,free:slots.filter(d=>d<=limit).length-placed.filter(s=>s.dates.length).reduce((n,s)=>n+s.dates.filter(d=>d<=limit).length,0)};
   }
@@ -931,7 +956,7 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     validateSchool(school);school.nonTeaching.sort((a,b)=>a.date.localeCompare(b.date));return school;
   }
   function exportSchool(s){return {format:'cuaderno-calendario-escolar',version:1,...(s.name?{name:s.name}:{}),start:s.start,end:s.end,nonTeaching:s.nonTeaching}}
-  return {TERM_MODES,FINAL_MODES,validateEvaluations,proposeBlocks,KINDS,STATUSES,STATUS_LABELS,WEEKDAYS,normalizeYear,yearOfDate,validateSchools,iso,addDays,weekday,validateSchool,validateCourse,blank,hasSessions,sessions,teachingDays,plan,prune,parseSchool,exportSchool};
+  return {TERM_MODES,FINAL_MODES,validateEvaluations,proposeBlocks,KINDS,STATUSES,STATUS_LABELS,WEEKDAYS,normalizeYear,yearOfDate,validateSchools,iso,addDays,weekday,validateSchool,validateCourse,blank,hasSessions,sessions,teachingDays,plan,storedDate,fixedDate,prune,parseSchool,exportSchool};
 });
 
 </script>
@@ -971,7 +996,7 @@ function renderCalendario(c){
   `<div class="notice">Vas en tiempo: la programación termina el <strong>${calendarDate(p.lastDate)}</strong>, ${p.margin} ${p.margin===1?'clase':'clases'} antes del límite (${calendarDate(p.limit)}).</div>`;
  shell(`<section class="calendar"><div class="section-head"><h1>Calendario de la programación</h1><div class="toolbar"><button class="btn" onclick="openCalendarSetup()">Configurar grupo</button><button class="btn" onclick="openSchoolCalendar()">Calendario del centro</button></div></div>
  <div class="grid metrics calendar-metrics"><div class="card metric"><strong>${p.capacity}</strong><span>Clases hasta el límite (${calendarDate(p.limit)})</span></div><div class="card metric"><strong>${p.needed}</strong><span>Clases que necesita la programación</span></div><div class="card metric ${p.margin<0?'is-late':''}"><strong>${p.margin>0?'+':''}${p.margin}</strong><span>Margen</span></div><div class="card metric"><strong>${calendarDate(p.lastDate)}</strong><span>Fin previsto de las sesiones</span></div><div class="card metric ${p.pending.length?'is-pending':''}"><strong>${p.pending.length}</strong><span>Sesiones pasadas por confirmar</span></div></div>
- ${status}${p.conflicts.map(x=>`<div class="notice warn">Sesión fijada el ${calendarDate(x.date)}: ${esc(x.reason)}.</div>`).join('')}
+ ${status}${p.conflicts.map(x=>{const s=p.sessions.find(y=>y.sessionId===x.sessionId);return `<div class="notice warn">${x.fixed?'Fecha fija':'Sesión fijada'} el ${calendarDate(x.date)}${s?' ('+esc(calendarSessionName(c,s))+')':''}: ${esc(x.reason)}.</div>`}).join('')}
  ${next?`<p class="calendar-next">${next.dates.includes(today)?'Hoy':'Próxima clase, '+esc(calendarDate(next.dates.find(d=>d>=today),true))}: <strong>${esc(calendarSessionName(c,next))}</strong></p>`:''}
  ${p.pending.length?`<div class="card calendar-pending"><div class="section-head"><h2>¿Qué se hizo en estas clases?</h2><button class="btn" onclick="calendarConfirmAll()">Marcar todas como hechas</button></div><ul>${p.pending.map(s=>`<li><span><b>${esc(calendarDate(s.dates[0]))}</b> · ${esc(calendarSessionName(c,s))}</span><span class="toolbar"><button class="btn small primary" onclick="calendarSetStatus(${jsArg(s.sessionId)},'done')">Hecha</button><button class="btn small" onclick="calendarSetStatus(${jsArg(s.sessionId)},'partial')">Parcial</button><button class="btn small" onclick="calendarToggleLost(${jsArg(s.dates[0])},true)">No hubo clase</button></span></li>`).join('')}</ul><p class="tiny muted">«No hubo clase» retrasa una clase todas las sesiones siguientes. «Parcial» hace que la sesión continúe en la clase siguiente.</p></div>`:''}
  <h2>Curso completo</h2>${calendarLegend()}<div class="calendar-year">${calendarMonths(c,school,p,today)}</div>
@@ -996,8 +1021,8 @@ function calendarMonths(c,school,p,today){
 }
 function calendarBlocks(c,p){
  return c.sdas.map(sd=>{const list=p.sessions.filter(s=>s.blockId===sd.id),count=k=>list.filter(s=>s.status===k).length;
-  return `<details class="card calendar-block"><summary><b>${esc(calendarBlockName(c,sd.id))}</b> <span class="muted">· ${list.length} sesiones · ${count('done')} hechas · ${count('partial')} parciales · ${count('dropped')} suprimidas${list.some(s=>s.dates.length)?` · ${calendarDate(list.find(s=>s.dates.length)?.dates[0])} → ${calendarDate(list.flatMap(s=>s.dates).at(-1))}`:''}</span></summary>
-  <ul>${list.map(s=>`<li class="${s.beyondLimit?'beyond':''}"><span class="cal-dot ${s.status||'planned'}"></span><span class="grow"><b>${s.dates.length?esc(s.dates.map(d=>calendarDate(d)).join(' y ')):s.status==='dropped'?'Suprimida':'Sin clase disponible'}</b> · ${esc(calendarSessionName(c,s))}${s.anchor?' <span class="pill">Fijada</span>':''}${s.note?`<div class="tiny muted">Nota: ${esc(s.note)}</div>`:''}</span><button class="btn small" onclick="openCalendarSession(${jsArg(s.sessionId)})">Opciones</button></li>`).join('')||'<li class="muted">Sin sesiones.</li>'}</ul></details>`}).join('');
+  return `<details class="card calendar-block"><summary><b>${esc(calendarBlockName(c,sd.id))}</b> <span class="muted">· ${list.length} sesiones · ${count('done')} hechas · ${count('partial')} parciales · ${count('dropped')} suprimidas${list.some(s=>s.dates.length)?` · ${calendarDate(list.flatMap(s=>s.dates).sort()[0])} → ${calendarDate(list.flatMap(s=>s.dates).sort().at(-1))}`:''}</span></summary>
+  <ul>${list.map(s=>`<li class="${s.beyondLimit?'beyond':''}"><span class="cal-dot ${s.status||'planned'}"></span><span class="grow"><b>${s.dates.length?esc(s.dates.map(d=>calendarDate(d)).join(' y ')):s.status==='dropped'?'Suprimida':'Sin clase disponible'}</b> · ${esc(calendarSessionName(c,s))}${s.fixed?' <span class="pill" title="Fecha fija: fuera del orden de la programación">Fecha fija</span>':s.anchor?' <span class="pill">Fijada</span>':''}${s.note?`<div class="tiny muted">Nota: ${esc(s.note)}</div>`:''}</span><button class="btn small" onclick="openCalendarSession(${jsArg(s.sessionId)})">Opciones</button></li>`).join('')||'<li class="muted">Sin sesiones.</li>'}</ul></details>`}).join('');
 }
 function renderCalendarSetup(c,school,inModal=false){
  const cal=c.calendar||{weekdays:[],end:school.end,reserveDays:14};
@@ -1055,12 +1080,15 @@ function calendarSetStatus(sessionId,status){return calendarChange(c=>{const t=c
 function calendarConfirmAll(){const ids=calendarPlanNow().pending.map(s=>s.sessionId);return calendarChange(c=>{const now=new Date().toISOString();ids.forEach(id=>{c.calendar.tracking[id]={...(c.calendar.tracking[id]||{}),status:'done',updatedAt:now}})},'marcar sesiones como hechas')}
 function calendarToggleLost(day,lost,reason=''){return calendarChange(c=>{const list=c.calendar.noSession.filter(x=>x.date!==day);if(lost)list.push({date:day,...(reason?{reason}:{})});c.calendar.noSession=list.sort((a,b)=>a.date.localeCompare(b.date))},lost?'día sin clase':'recuperar día de clase')}
 function calendarToggleDouble(day,on){return calendarChange(c=>{const list=c.calendar.doubles.filter(x=>x.date!==day);if(on)list.push({date:day});c.calendar.doubles=list.sort((a,b)=>a.date.localeCompare(b.date))},on?'dos sesiones el mismo día':'quitar sesión doble')}
+// Fecha fija = la fecha de la sesión en Estructura (dd/mm/aaaa). Mover desde el calendario escribe esa misma fecha.
+function calendarSetFixed(sessionId,day){return calendarChange(c=>{const m=String(day||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);for(const sd of c.sdas)for(const se of sd.sessions)if(se.id===sessionId)se.date=m?`${m[3]}/${m[2]}/${m[1]}`:'';c.calendar.anchors=c.calendar.anchors.filter(a=>a.sessionId!==sessionId)},day?'mover sesión a una fecha fija':'quitar fecha fija')}
 function calendarToggleAnchor(sessionId,day){return calendarChange(c=>{const list=c.calendar.anchors.filter(a=>a.sessionId!==sessionId);if(day)list.push({sessionId,date:day});c.calendar.anchors=list},day?'fijar sesión':'quitar fecha fija')}
 async function calendarSaveNote(sessionId){const note=document.getElementById('calendarNote-'+sessionId).value.trim().slice(0,2000);const result=await calendarChange(c=>{const t={...(c.calendar.tracking[sessionId]||{})};if(note)t.note=note;else delete t.note;t.updatedAt=new Date().toISOString();if(t.status||t.note)c.calendar.tracking[sessionId]=t;else delete c.calendar.tracking[sessionId]},'nota de revisión de sesión');if(result.ok)closeModal();return result}
 function calendarSessionActions(c,s,day=''){
- return `<article class="calendar-session"><h3>${esc(calendarSessionName(c,s))}</h3><p class="tiny muted">${s.dates.length?'Prevista: '+esc(s.dates.map(d=>calendarDate(d,true)).join(' y ')):'Sin clase asignada'}${s.anchor?` · fijada el ${calendarDate(s.anchor)}`:''}</p>
+ return `<article class="calendar-session"><h3>${esc(calendarSessionName(c,s))}</h3><p class="tiny muted">${s.dates.length?'Prevista: '+esc(s.dates.map(d=>calendarDate(d,true)).join(' y ')):'Sin clase asignada'}${s.fixed?' · fecha fija (fuera del orden de la programación)':s.anchor?` · fijada el ${calendarDate(s.anchor)}`:''}</p>
  <div class="toolbar" role="group" aria-label="Estado de la sesión">${[['done','Hecha'],['partial','Parcial'],['dropped','Suprimida'],['','Sin marcar']].map(([k,t])=>`<button class="btn small ${s.status===k?'primary':''}" aria-pressed="${s.status===k}" onclick="closeModal();calendarSetStatus(${jsArg(s.sessionId)},${jsArg(k)})">${t}</button>`).join('')}</div>
- <div class="toolbar">${s.anchor?`<button class="btn small" onclick="closeModal();calendarToggleAnchor(${jsArg(s.sessionId)},'')">Quitar fecha fija</button>`:day?`<button class="btn small" onclick="closeModal();calendarToggleAnchor(${jsArg(s.sessionId)},${jsArg(day)})">Fijar en esta fecha</button>`:''}</div>
+ <div class="toolbar">${s.fixed?`<button class="btn small" onclick="closeModal();calendarSetFixed(${jsArg(s.sessionId)},'')">Quitar fecha fija (vuelve a su orden)</button>`:s.anchor?`<button class="btn small" onclick="closeModal();calendarToggleAnchor(${jsArg(s.sessionId)},'')">Quitar fecha fija</button>`:day?`<button class="btn small" onclick="closeModal();calendarToggleAnchor(${jsArg(s.sessionId)},${jsArg(day)})">Fijar en esta fecha</button>`:''}</div>
+ <div class="toolbar calendar-move"><label>Mover a otro día (fecha fija)<input type="date" id="calendarMove-${esc(s.sessionId)}" value="${esc(s.fixed)}"></label><button class="btn small" onclick="const v=document.getElementById('calendarMove-'+${jsArg(s.sessionId)}).value;if(!v){alert('Elige una fecha.');return}closeModal();calendarSetFixed(${jsArg(s.sessionId)},v)">Mover</button></div>
  <label>Nota para la revisión del próximo curso<textarea id="calendarNote-${esc(s.sessionId)}" rows="3" maxlength="2000">${esc(s.note)}</textarea></label><div class="toolbar"><button class="btn primary" onclick="calendarSaveNote(${jsArg(s.sessionId)})">Guardar nota</button><button class="btn" onclick="closeModal()">Cerrar</button></div></article>`;
 }
 function openCalendarSession(sessionId){const c=course(),s=calendarPlanNow().sessions.find(x=>x.sessionId===sessionId);if(s)openModal(`<h2>Sesión</h2>${calendarSessionActions(c,s)}`)}
@@ -1069,7 +1097,13 @@ function openCalendarDay(day){
  openModal(`<h2>${esc(calendarDate(day,true))}</h2>
  ${lost?`<p class="notice warn">Marcado sin clase${lost.reason?': '+esc(lost.reason):''}. Las sesiones se han retrasado una clase.</p><div class="toolbar"><button class="btn primary" onclick="closeModal();calendarToggleLost(${jsArg(day)},false)">Sí hubo clase (adelantar)</button><button class="btn" onclick="closeModal()">Cerrar</button></div>`:
  `<div class="toolbar"><label>Motivo (opcional)<input type="text" id="calendarLostReason" maxlength="200" placeholder="Excursión, huelga, examen de otra materia…"></label><button class="btn" onclick="const r=document.getElementById('calendarLostReason').value.trim();closeModal();calendarToggleLost(${jsArg(day)},true,r)">No hubo clase este día (retrasar)</button><button class="btn" onclick="closeModal();calendarToggleDouble(${jsArg(day)},${!double})">${double?'Quitar la segunda sesión de este día':'Este día se dieron dos sesiones (adelantar)'}</button></div>
- ${list.map(s=>calendarSessionActions(c,s,day)).join('')||'<p class="muted">No hay ninguna sesión prevista en esta clase.</p><div class="toolbar"><button class="btn" onclick="closeModal()">Cerrar</button></div>'}`}`);
+ ${list.map(s=>calendarSessionActions(c,s,day)).join('')||'<p class="muted">No hay ninguna sesión prevista en esta clase.</p><div class="toolbar"><button class="btn" onclick="closeModal()">Cerrar</button></div>'}
+ ${calendarMoveHere(c,p,day)}`}`);
+}
+function calendarMoveHere(c,p,day){
+ const options=c.sdas.map(sd=>{const items=p.sessions.filter(s=>s.blockId===sd.id&&s.status!=='dropped'&&!s.dates.includes(day));return items.length?`<optgroup label="${esc(calendarBlockName(c,sd.id))}">${items.map(s=>`<option value="${esc(s.sessionId)}">${esc(calendarSessionName(c,s))}${s.dates.length?' · ahora '+esc(calendarDate(s.dates[0])):''}</option>`).join('')}</optgroup>`:''}).join('');
+ if(!options)return '';
+ return `<details class="calendar-move-here"><summary>Poner otra sesión en este día (fecha fija)</summary><p class="tiny muted">La sesión elegida se queda en este día, fuera del orden de la programación (útil para salidas, concursos o actividades sueltas). Las demás sesiones se reorganizan alrededor. Es la misma fecha que puedes escribir en Estructura.</p><div class="toolbar"><select id="calendarMoveSelect">${options}</select><button class="btn primary" onclick="const v=document.getElementById('calendarMoveSelect').value;closeModal();calendarSetFixed(v,${jsArg(day)})">Poner en este día</button></div></details>`;
 }
 
 </script>
