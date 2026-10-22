@@ -1,0 +1,31 @@
+CUADERNO DE EVALUACIÓN · VERSIÓN WEB (generada desde la versión de escritorio 1.6.2)
+==================================================================================
+
+QUÉ ES
+Una ayuda personal para el profesorado. Funciona en el navegador y sin conexión.
+Los datos se guardan SOLO en el dispositivo y navegador de cada docente. No hay servidor.
+
+CÓMO USARLA (DOCENTES)
+1. Abre la dirección web de la app (recomendado) o el archivo index.html.
+2. Lee y acepta los avisos la primera vez.
+3. Instálala:
+   - iPad/iPhone (Safari): Compartir → Añadir a pantalla de inicio. Úsala siempre desde ese icono.
+   - Mac con Safari: Archivo → Añadir al Dock.
+   - Chrome/Edge: icono «Instalar» en la barra de direcciones.
+4. COPIAS: botón «Guardar copia ahora» (barra superior). Hazla con regularidad y siempre
+   antes de vacaciones y de cada evaluación. En Chrome/Edge de ordenador puedes activar
+   «Copia automática en archivo» en «Datos y copias».
+5. Para cambiar de dispositivo: guarda una copia en el antiguo y usa «Restaurar copia» en el nuevo.
+   Las copias son compatibles con la versión de escritorio.
+
+LIMITACIONES CONOCIDAS
+- Si se borran los datos del navegador y no hay copia, los datos no se pueden recuperar.
+- Solo puede estar abierta en una pestaña a la vez (para no mezclar cambios).
+- La copia automática en archivo solo existe en Chrome/Edge de ordenador.
+- En iPad la app debe abrirse desde una dirección web (http/https), no como archivo.
+
+PUBLICARLA (UNA VEZ, POR LA PERSONA RESPONSABLE)
+Sube TODO el contenido de esta carpeta (index.html, sw.js, manifest.webmanifest e iconos)
+a un alojamiento web estático con https: web del centro, GitHub Pages, etc.
+El alojamiento solo sirve los archivos de la app: nunca recibe datos del alumnado.
+Para actualizar, sustituye los archivos; la app se actualiza sola al abrirse con conexión.
