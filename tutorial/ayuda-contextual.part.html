@@ -1,0 +1,337 @@
+<style>
+/* Ayuda contextual: botón por pestaña, panel lateral e instrucciones paso a paso en cada importación */
+.hc-btn{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
+.hc-btn b{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#1765e9;color:#fff;font-size:12px}
+.hc-drawer{position:fixed;top:0;right:0;bottom:0;width:min(420px,100vw);z-index:950;background:#fff;color:var(--text);box-shadow:-12px 0 40px rgba(15,23,42,.18);display:flex;flex-direction:column;border-left:1px solid var(--line)}
+.hc-drawer header{display:flex;align-items:center;gap:8px;padding:14px 18px;border-bottom:1px solid var(--line);background:#f8fafc}
+.hc-drawer header h2{margin:0;font-size:17px;flex:1}
+.hc-drawer .hc-body{padding:6px 18px 20px;overflow:auto;line-height:1.55;font-size:14.5px}
+.hc-drawer h3{font-size:14px;margin:16px 0 6px;text-transform:uppercase;letter-spacing:.03em;color:#1f3557}
+.hc-drawer ol,.hc-drawer ul{padding-left:20px;margin:6px 0}.hc-drawer li{margin:5px 0}
+.hc-drawer footer{padding:10px 18px;border-top:1px solid var(--line);display:flex;gap:8px;flex-wrap:wrap}
+.hc-imp{border:1px solid #cfe0fa;background:#f4f8fe;border-radius:12px;margin:4px 0 14px;font-size:14px;line-height:1.5}
+.hc-imp>summary{cursor:pointer;padding:10px 14px;font-weight:700;color:#0f3f8f;list-style:none;display:flex;align-items:center;gap:8px}
+.hc-imp>summary::-webkit-details-marker{display:none}
+.hc-imp>summary::before{content:"▸";transition:transform .15s}.hc-imp[open]>summary::before{transform:rotate(90deg)}
+.hc-imp>summary small{font-weight:400;color:var(--muted);margin-left:auto}
+.hc-imp .hc-in{padding:0 14px 12px}
+.hc-steps{list-style:none;padding:0;margin:4px 0;counter-reset:hc}
+.hc-steps li{counter-increment:hc;position:relative;padding:6px 0 6px 36px;border-bottom:1px dashed #d6e3f6}
+.hc-steps li:last-child{border-bottom:0}
+.hc-steps li::before{content:counter(hc);position:absolute;left:0;top:6px;width:24px;height:24px;border-radius:50%;background:#1765e9;color:#fff;display:grid;place-items:center;font-weight:700;font-size:13px}
+.hc-steps li b{display:block}
+.hc-ia{background:#fff;border:1px dashed #9cc0f5;border-radius:10px;padding:8px 12px;margin:8px 0}
+.hc-ia code{white-space:pre-wrap}
+.hc-state{border-radius:10px;padding:8px 12px;margin:8px 0;font-weight:600}
+.hc-state.ok{background:#effaf3;color:#14532d;border:1px solid #bfe5cc}.hc-state.bad{background:#fdecec;color:#7f1d1d;border:1px solid #f3c2c2}
+.hc-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.hc-copied{color:#15803d;font-weight:600}
+.hc-manual{width:100%;min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;margin-top:6px}
+@media print{.hc-btn,.hc-drawer,.hc-imp{display:none!important}}
+</style>
+<script>
+/* ayuda-contextual.js · Ayuda por pestaña e instrucciones paso a paso en cada importación (solo versión web). */
+(function(){
+'use strict';
+const T = s => `<span class="wt-key">${s}</span>`, P = s => `<span class="wt-key primary">${s}</span>`;
+const NO_DATA_IA = '<p><strong>Nunca pegues en una IA nombres ni datos del alumnado.</strong></p>';
+
+/* ---------- ayuda de cada pestaña ---------- */
+const PAGES = {
+  _home: { title: 'Materias (pantalla de inicio)', what: 'Es tu punto de partida: aquí están todas tus materias del curso escolar elegido.', steps: [
+      `${P('Crear materia')}: puedes crearla a mano, a partir de tu programación de aula con ayuda de una IA, o duplicando otra materia (copia la estructura, no las notas).`,
+      `${T('Entrar a la materia')} para trabajar con ella.`,
+      `Cambia de curso escolar con el selector «Curso escolar».`,
+      `${T('Importar copia de materia')} trae una materia exportada antes (por ejemplo, desde otro dispositivo) sin borrar las demás.`],
+    note: [`${T('Guardar copia completa')} descarga tu copia de seguridad. ${T('Restaurar copia completa')} <strong>sustituye todo</strong> por el contenido de un archivo de copia.`] },
+  Inicio: { title: 'Inicio de la materia', what: 'Resumen de la materia: cuánto llevas evaluado y cómo va el grupo. Solo consulta: no cambia nada.', steps: [
+      'Las cifras de arriba muestran alumnado, criterios, sesiones, evidencias evaluables y la media provisional del grupo.',
+      'Cada barra de la izquierda indica cuántas sesiones de esa unidad/SDA tienen ya notas.',
+      'A la derecha ves, criterio a criterio, cuántas evidencias están evaluadas y la media del grupo.',
+      'Usa el menú lateral: «Día a día» para el trabajo diario, «Seguimiento» para revisar y cerrar evaluaciones, «Preparar el curso» para configurarlo.'],
+    note: ['La media provisional solo tiene en cuenta los criterios que ya tienen alguna nota; lo no trabajado no cuenta como cero.'] },
+  Evaluar: { title: 'Evaluar', what: 'Aquí pones las notas de cada actividad a todo el grupo.', steps: [
+      'Elige la unidad/SDA, la sesión y la actividad en los selectores de arriba.',
+      'Escribe la nota de cada alumno (0 a 10). <strong>Tab</strong> pasa al siguiente campo; <strong>Enter</strong> / <strong>Mayús+Enter</strong> al alumno siguiente / anterior.',
+      'Si la actividad usa rúbrica, ábrela y marca el nivel de cada indicador: la nota se calcula sola.',
+      'Puedes añadir una observación a cada alumno.',
+      `${T('Completar alumno')} te permite evaluar a un alumno concreto en sus actividades.`],
+    note: ['<strong>Un 0 es una nota.</strong> Un campo vacío significa «pendiente» y no cuenta.', 'Se guarda solo: no hay botón Guardar.', 'Si sale «evaluable sin criterios», asígnale criterios en Estructura; si no, esa nota no computa.'] },
+  'Apuntes de sesión': { title: 'Apuntes de sesión', what: 'Anotaciones rápidas de clase (actitud, trabajo, faltas). No cambian ninguna nota.', steps: [
+      'Elige la sesión (o «Sin sesión formal») y la fecha real de la clase.',
+      `Selecciona uno o varios alumnos (o ${T('Seleccionar todo el alumnado')}).`,
+      'Pulsa una etiqueta rápida (Muy bien, Trabaja, Necesita apoyo, No realiza la tarea, No ha asistido…) o escribe un comentario y pulsa Guardar comentario.'],
+    note: ['Estas anotaciones aparecen en la Evaluación individualizada y en el Cierre (comentarios y faltas).', `Con ${T('Configurar etiquetas')} cambias las etiquetas (una por línea). Cambiarlas no modifica lo ya anotado.`, 'Las faltas oficiales se siguen poniendo en ÍTACA.'] },
+  Calendario: { title: 'Calendario', what: 'Reparte las sesiones de tu programación en los días de clase reales y te dice si vas en tiempo.', steps: [
+      `<b>Calendario del centro</b> (una sola vez por curso escolar, sirve para todas tus materias): ${T('Introducir calendario del centro')} → ${T('Formato para IA')} → pégalo en una IA y adjunta el calendario oficial (PDF o imagen) → pega aquí el JSON que te devuelva → ${P('Validar y guardar')}.`,
+      `<b>Configurar grupo</b>: marca los días de la semana con clase, el último día de clase y los días de margen al final (exámenes, recuperaciones).`,
+      'La app coloca cada sesión en una fecha y te avisa de si terminarás a tiempo.',
+      'Cuando pasen las clases, confirma qué se hizo: hecha, «No hubo clase» o «Parcial».'],
+    note: ['«No hubo clase» retrasa una clase todas las sesiones siguientes. «Parcial» hace que esa sesión continúe en la clase siguiente.', 'Las notas de seguimiento te sirven para revisar la programación el curso que viene.'] },
+  Cuaderno: { title: 'Cuaderno', what: 'Vista de tabla, como el Excel de siempre: todas las notas del grupo por actividad.', steps: [
+      'Elige el bloque (unidad/SDA) que quieres ver.',
+      'Pulsa una celda para ir a evaluar a ese alumno en esa actividad.'],
+    note: ['Es sobre todo de consulta: las notas se ponen en Evaluar.'] },
+  Criterios: { title: 'Criterios', what: 'Los criterios de evaluación de la materia, su peso (%) y cómo se divide el curso en evaluaciones.', steps: [
+      `${T('Configurar evaluación')}: introduce los criterios a mano o con ${T('Importar criterios JSON')} (con ayuda de una IA).`,
+      `Pesos: ${T('Ponderación igual')} reparte por igual; ${T('Ponderación personalizada')} te deja escribir cada %; ${T('Importar ponderaciones')} los trae de tu propuesta didáctica con una IA. Deben sumar 100 %.`,
+      `${T('Configurar evaluaciones (1.ª, 2.ª, 3.ª)')}: cuántas evaluaciones hay, qué criterios entran en cada una, si la nota es solo de lo trabajado en esa evaluación o continua, y cómo se calcula la final. ${T('Proponer según el calendario')} lo sugiere por fechas.`,
+      `${T('Banco de rúbricas')}: plantillas de rúbrica reutilizables.`],
+    note: ['La nota es la media ponderada de los criterios <strong>calificados</strong>; los no trabajados no cuentan como cero. La «cobertura» indica qué parte del peso total ya tiene nota.', 'Eliminar un criterio que ya tiene evidencias afecta a las notas: revisa antes.'] },
+  Observaciones: { title: 'Evaluación individualizada', what: 'La ficha de cada alumno: resultados por criterio, evidencias, observaciones y faltas.', steps: [
+      `Busca al alumno o recórrelos con ${T('Alumno anterior')} / ${T('Alumno siguiente')}.`,
+      'Elige el periodo del historial (curso completo o una evaluación).',
+      `Añade observaciones con ${T('Añadir observación')}.`],
+    note: ['El periodo solo filtra el historial; no cambia la nota de evaluación.', 'Las anotaciones de «Apuntes de sesión» aparecen aquí automáticamente.', `${T('Configurar periodos')} define los tramos (por ejemplo, cada evaluación).`] },
+  Cierre: { title: 'Cierre de evaluación', what: 'Prepara la sesión de evaluación o el boletín: nota de la evaluación actual de cada alumno con sus comentarios y faltas. Solo consulta.', steps: [
+      'Revisa la nota y los comentarios de cada alumno.',
+      `${T('Exportar cierre a Excel (.xlsx)')} si quieres llevarlo a la sesión de evaluación.`,
+      'Para decidir qué criterios entran en cada evaluación, ve a Criterios → Configurar evaluaciones.'],
+    note: ['Las calificaciones oficiales se registran en ÍTACA.', 'El Excel contiene datos personales: guárdalo en un espacio autorizado.'] },
+  Estructura: { title: 'Estructura', what: 'Tu programación dentro de la app: unidades/SDA, sesiones y actividades, y cómo se evalúa cada actividad.', steps: [
+      `Elige o crea una unidad/SDA (${T('+ Añadir Unidad')}) y sus sesiones (${T('+ Añadir Sesión')}).`,
+      'Dentro de cada sesión crea las actividades. En cada actividad indica si es evaluable, a qué criterios se asocia, su factor (cuánto pesa frente a otras del mismo criterio) y el instrumento (nota directa o rúbrica).',
+      'Marca el estado de cada unidad: Planificada, Activa o Completada.'],
+    note: ['⚠ Una actividad evaluable sin criterios no computa en ninguna nota.', `Para añadir más SDA: créalas aquí a mano o, si importaste la programación por partes y no estaba terminada, con ${T('Añadir parte de programación')} (arriba).`, 'Después de cambios grandes, pasa por Revisión.'] },
+  'Revisión': { title: 'Revisión de la programación', what: 'Comprueba que todo cuadra antes de evaluar: cada criterio con evidencias, pesos, rúbricas… Solo consulta.', steps: [
+      'Lee los problemas (rojo) y avisos (naranja).',
+      `Pulsa ${T('Abrir')} para ir directamente al elemento y corregirlo en Estructura.`,
+      'La tabla final muestra, por criterio, su peso, cuántas actividades lo evalúan y cuántas ya tienen notas.'],
+    note: ['Úsala después de importar una programación y antes de empezar a evaluar.'] },
+  Alumnado: { title: 'Alumnado', what: 'La lista de alumnos de esta materia.', steps: [
+      `${P('Añadir alumnado')} y elige: a mano, ${T('Pegar listado')} (una persona por línea; si pegas columnas desde Excel o ÍTACA, la app te pregunta qué es cada columna), ${T('Importar CSV')} o ${T('Copiar alumnado de otra materia')} (solo copia nombres).`,
+      'Antes de incorporar verás una vista previa; nada se añade hasta que confirmas.',
+      'Cambia el orden visual si lo necesitas.'],
+    note: [`${T('Exportar CSV')} y ${T('Exportar Excel')} crean archivos con datos personales: guárdalos en un espacio autorizado.`, NO_DATA_IA] },
+  Recuperaciones: { title: 'Recuperaciones', what: 'Crea una actividad de recuperación para una evidencia concreta.', steps: [
+      'Elige la actividad original en el desplegable y pulsa Crear.',
+      'Se crea una actividad de recuperación que sustituye solo esa evidencia (con el mismo factor, salvo que lo cambies).',
+      'Califícala en Evaluar como cualquier otra actividad.'],
+    note: ['La nota original no se borra: la recuperación la sustituye a efectos de cálculo.'] },
+  Copias: { title: 'Copias y datos', what: 'Copias de seguridad y restauración.', steps: [
+      `${P('Exportar JSON')}: descarga la copia completa (todas las materias). Es lo mismo que «Guardar copia ahora».`,
+      `${T('Importar JSON')}: restaura una copia completa. <strong>Sustituye todo</strong> lo que hay ahora.`,
+      `${T('Exportar materia')} / ${T('Importar copia de materia')}: copia solo esta materia; al importarla se añade como materia independiente.`],
+    note: [`<strong>Cuidado:</strong> aquí ${T('Restaurar esta materia')} y ${T('Restaurar toda la app')} significan <strong>vaciar</strong> (borrar), no recuperar una copia. Guarda una copia antes.`] }
+};
+function pageHelpHtml(h){
+  return `<p>${h.what}</p><h3>Cómo se usa</h3><ol>${h.steps.map(s => `<li>${s}</li>`).join('')}</ol>${h.note && h.note.length ? `<h3>Ten en cuenta</h3><ul>${h.note.map(s => `<li>${s}</li>`).join('')}</ul>` : ''}`;
+}
+function currentPage(){ try { const c = typeof course === 'function' ? course() : null; return c ? c.ui.page : '_home'; } catch { return '_home'; } }
+function openDrawer(key){
+  const h = PAGES[key] || PAGES._home;
+  let d = document.getElementById('hcDrawer');
+  if(!d){
+    d = document.createElement('aside'); d.id = 'hcDrawer'; d.className = 'hc-drawer no-print';
+    d.setAttribute('role', 'complementary'); d.setAttribute('aria-label', 'Ayuda');
+    d.addEventListener('click', e => { const a = e.target.closest('[data-hc]'); if(!a) return;
+      if(a.dataset.hc === 'close') closeDrawer(); if(a.dataset.hc === 'tutorial' && window.CuadernoTutorial){ closeDrawer(); CuadernoTutorial.open(0); } });
+    document.body.appendChild(d);
+  }
+  d.dataset.page = key;
+  d.innerHTML = `<header><h2>? ${h.title}</h2><button type="button" class="wt-close" data-hc="close" aria-label="Cerrar ayuda">×</button></header>
+    <div class="hc-body">${pageHelpHtml(h)}</div>
+    <footer><button type="button" class="btn small" data-hc="tutorial">Tutorial general (copias y JSON)</button><button type="button" class="btn small primary" data-hc="close">Cerrar</button></footer>`;
+  d.querySelector('[data-hc="close"]').focus();
+}
+function closeDrawer(){ const d = document.getElementById('hcDrawer'); if(d) d.remove(); }
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && document.getElementById('hcDrawer') && !document.querySelector('.web-overlay') && !document.getElementById('modal')?.classList.contains('open')) closeDrawer(); });
+
+function hookPageButton(){
+  const key = currentPage();
+  const host = key === '_home' ? document.querySelector('.home-tools') : document.getElementById('workContext');
+  const d = document.getElementById('hcDrawer');
+  if(d && d.dataset.page !== key) openDrawer(key);   // la ayuda abierta sigue a la pestaña
+  if(!host || host.querySelector('.hc-btn')) return;
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'btn small hc-btn no-print';
+  b.innerHTML = '<b aria-hidden="true">?</b> Ayuda de esta pestaña';
+  b.addEventListener('click', () => { const k = currentPage(); document.getElementById('hcDrawer')?.dataset.page === k ? closeDrawer() : openDrawer(k); });
+  host.appendChild(b);
+}
+
+/* ---------- copia al portapapeles con alternativa manual ---------- */
+async function copyText(text, statusEl, okMsg){
+  try { await navigator.clipboard.writeText(text); if(statusEl) statusEl.innerHTML = `<span class="hc-copied">✓ ${okMsg}</span>`; }
+  catch { if(statusEl){ statusEl.innerHTML = '<p>No se pudo copiar automáticamente. Selecciona todo este texto y cópialo:</p>'; const t = document.createElement('textarea'); t.className = 'hc-manual'; t.readOnly = true; t.value = text; statusEl.appendChild(t); t.select(); } }
+}
+
+/* ---------- añadir parte de programación: estado y mensaje para la IA ---------- */
+function targetCourse(){ try { return typeof PROGRAMMING_TARGET !== 'undefined' && PROGRAMMING_TARGET ? APP.courses.find(c => c.id === PROGRAMMING_TARGET) : null; } catch { return null; } }
+function partState(c){
+  const led = c && c.programming && c.programming.fragmentation;
+  if(!c || !c.programming) return { ok: false, why: 'Esta materia se creó a mano (o duplicando otra), no desde una programación importada por partes. Por eso no admite «partes».' };
+  if(!led || !Array.isArray(led.entries) || !led.entries.length) return { ok: false, why: 'Esta materia se importó de una sola vez (programación completa). No admite partes adicionales.' };
+  if(led.entries[led.entries.length - 1].hasMore === false) return { ok: false, why: `La programación ya está completa: se importaron ${led.entries.length} parte(s) y la última estaba marcada como final.` };
+  return { ok: true, led, next: led.entries.length + 1 };
+}
+function continuationPrompt(c, st){
+  const prog = c.programming, crit = (prog.evaluation && prog.evaluation.criteria) || [];
+  const units = (prog.planning || []).map(n => `${n.id} «${n.title || ''}»`);
+  const frag = { id: `parte-${st.next}-${Date.now().toString(36)}`, type: 'planning', sequence: st.next, total: st.led.total ?? null, hasMore: '(true si después de esta quedan más partes; false si es la última)' };
+  return `Continúa la conversión de mi programación de aula al formato cuaderno-programacion-fragment v1 (las reglas completas están al final de este mensaje).
+Devuelve ÚNICAMENTE la parte siguiente, en JSON válido, sin ningún texto antes ni después, con estos valores obligatorios:
+- "format": "cuaderno-programacion-fragment" y "formatVersion": 1
+- "programmingId": ${JSON.stringify(st.led.programmingId)}
+- "fragment": ${JSON.stringify(frag)}
+- "structure" exactamente igual a: ${JSON.stringify(prog.structure)}
+- NO incluyas "course".
+- Criterios ya declarados (referéncialos por su id y no los declares de nuevo): ${crit.map(x => `${x.id} = ${x.code ?? '(sin código)'}`).join('; ') || 'ninguno'}
+- Unidades ya importadas (no repitas estos id): ${units.join('; ') || 'ninguna'}
+- Todos los id nuevos deben ser distintos de los anteriores.
+
+Contenido de esta parte: [ESCRIBE AQUÍ qué unidades/SDA quieres añadir, por ejemplo «SDA 4 y SDA 5 del documento adjunto»]
+
+--- Reglas del formato ---
+${typeof ProgrammingContract !== 'undefined' ? ProgrammingContract.instructions() : ''}`;
+}
+function programmingPartBlock(){
+  const c = targetCourse(), st = partState(c);
+  if(!st.ok) return `<div class="hc-state bad">✗ ${st.why}</div>
+    <p><strong>Cómo añadir más SDA a esta materia:</strong></p>
+    <ul><li>Ve a ${T('Estructura')} y pulsa ${T('+ Añadir Unidad')} para crearlas a mano.</li>
+    <li>O crea una materia nueva desde programación con las SDA que faltan y copia lo que necesites.</li></ul>`;
+  const total = st.led.total ? ` de ${st.led.total}` : '';
+  return `<div class="hc-state ok">✓ Esta materia admite más partes. Ya hay ${st.led.entries.length} importada(s). La siguiente debe ser la <strong>parte ${st.next}${total}</strong>.</div>
+    <ol class="hc-steps">
+      <li><b>Pide la parte siguiente a la IA.</b>
+        <em>¿Sigues en la misma conversación con la IA donde hiciste la parte anterior?</em> Escribe solo: <code>SIGUIENTE</code>.<br>
+        <em>¿Es una conversación nueva o ya no la tienes?</em> Copia este mensaje, pégalo en la IA, adjunta otra vez tu programación y completa la línea «Contenido de esta parte».
+        <div class="hc-actions"><button type="button" class="btn small primary" data-hc-act="copy-next">Copiar «SIGUIENTE»</button><button type="button" class="btn small" data-hc-act="copy-cont">Copiar mensaje para conversación nueva</button></div>
+        <div data-hc-status></div></li>
+      <li><b>Copia la respuesta entera de la IA</b> (el bloque que empieza por <code>{</code>) y pégala en el recuadro de abajo. Si la IA escribe frases antes o después, no pasa nada: la app las ignora.</li>
+      <li><b>Pulsa ${P('Validar parte')}.</b> La app comprueba que es la parte ${st.next}, que pertenece a esta programación y que la estructura coincide. <strong>Todavía no se guarda nada.</strong></li>
+      <li><b>Revisa la vista previa.</b> Mira cuántas unidades, sesiones y actividades nuevas se añaden, y si quedan más partes. Pulsa ${P('Confirmar importación')}.</li>
+      <li><b>Resultado.</b> Las nuevas SDA se añaden al final de tu Estructura <strong>sin tocar</strong> lo que ya había (ni notas ni cambios tuyos). Si te equivocas, pulsa ${T('Deshacer')}. Si quedan más partes, vuelve a esta ventana y repite.</li>
+    </ol>
+    <p><strong>Si da error:</strong> no se guarda nada. Copia el mensaje de error, pégalo en la IA y pídele: «Corrige esta misma parte». No pidas SIGUIENTE hasta que esta parte se importe bien.</p>${NO_DATA_IA}`;
+}
+
+/* ---------- instrucciones de cada importación ---------- */
+const IMPORTS = {
+  programmingCreate: { title: 'Cómo funciona: crear una materia desde tu programación', html: () => `
+    <ol class="hc-steps">
+      <li><b>Copia las instrucciones para la IA</b> con ${T('Formato para IA')} (arriba a la derecha). Son el «molde» que la IA debe rellenar.</li>
+      <li><b>En la IA</b> (ChatGPT, Claude, Gemini…): pega las instrucciones y <strong>adjunta tu programación de aula</strong> (PDF o Word). Envía el mensaje.
+        <div class="hc-ia">Si la IA te hace preguntas (curso escolar, nivel…), contéstalas. No le pidas resúmenes ni cambios: solo que convierta.</div></li>
+      <li><b>Copia la respuesta entera</b> (el bloque que empieza por <code>{</code>) y pégala abajo, o guárdala como archivo y usa ${T('Seleccionar archivo JSON')}. Las frases que la IA ponga antes o después se ignoran solas.</li>
+      <li><b>Pulsa ${P('Validar y crear materia')}.</b> La app lo revisa y te enseña una vista previa (unidades, sesiones, actividades, criterios). <strong>Aún no se guarda nada.</strong></li>
+      <li><b>Pulsa ${P('Confirmar importación')}.</b> Se crea la materia con su estructura y criterios, sin alumnado ni notas. Después: añade alumnado y pasa por Revisión.</li>
+    </ol>
+    <p><strong>Programación larga:</strong> la IA te dará solo la parte 1 (te lo dirá). Impórtala igual; luego, dentro de la materia, usa ${T('Añadir parte de programación')} para el resto.</p>
+    <p><strong>Si da error:</strong> no se guarda nada. Copia el mensaje de error en la IA y pídele que «corrija esa misma parte».</p>${NO_DATA_IA}` },
+  programmingPart: { title: 'Cómo funciona: añadir la siguiente parte de la programación', html: programmingPartBlock },
+  criteria: { title: 'Cómo funciona: importar criterios', html: () => `
+    <ol class="hc-steps">
+      <li><b>Pulsa ${T('Formato para IA')}</b> (arriba a la derecha) para copiar las instrucciones.</li>
+      <li><b>En la IA</b>: pega las instrucciones y adjunta tu programación o el currículo (decreto) de la materia.</li>
+      <li><b>Copia la respuesta</b> y pégala abajo (o selecciona el archivo JSON).</li>
+      <li><b>Pulsa ${P('Validar y añadir criterios')}.</b> Los criterios se <strong>añaden</strong> a los que ya tienes. Si algún código ya existe, se rechaza (no se duplica ni se sobrescribe).</li>
+    </ol>
+    <p>No se tocan actividades ni notas. Después revisa los pesos en Criterios (deben sumar 100 %). Si te equivocas, ${T('Deshacer')}.</p>` },
+  weights: { title: 'Cómo funciona: importar ponderaciones', html: () => `
+    <ol class="hc-steps">
+      <li><b>Pulsa ${T('Formato para IA')}</b> para copiar las instrucciones.</li>
+      <li><b>En la IA</b>: pega las instrucciones y adjunta tu propuesta didáctica, donde aparecen los pesos de cada criterio.</li>
+      <li><b>Pega la respuesta</b> abajo y pulsa ${P('Previsualizar ponderaciones')}. <strong>Aún no se aplica nada.</strong></li>
+      <li><b>Revisa la vista previa.</b> Mira cuántos pesos coinciden con tus criterios, si suman 100 % y si hay códigos que no existen en la materia.</li>
+      <li><b>Pulsa ${P('Aplicar ponderaciones')}.</b> Solo cambia el % de los criterios cuyo código coincide; los demás conservan su peso.</li>
+    </ol>
+    <p>No se tocan criterios, actividades ni notas. Puedes seguir editando los pesos a mano.</p>` },
+  rubric: { title: 'Cómo funciona: importar una rúbrica', html: () => `
+    <ol class="hc-steps">
+      <li><b>Elige el origen.</b> Una rúbrica en Excel (.xlsx, hoja «Rúbrica») o CSV → ${T('Seleccionar archivo de rúbrica')}. O un documento cualquiera → con ayuda de una IA (paso 2).</li>
+      <li><b>Con IA.</b> ${T('Formato para IA')} → pega las instrucciones en la IA, adjunta el documento de la rúbrica y pega aquí la respuesta.</li>
+      <li><b>Pulsa ${P('Previsualizar rúbrica')}</b>: verás indicadores y niveles. <strong>Aún no se guarda.</strong></li>
+      <li><b>Confirma.</b> La rúbrica queda en tu Banco de rúbricas (o en la actividad desde la que la abriste).</li>
+    </ol>
+    <p>Los criterios que traiga la rúbrica son solo de referencia: <strong>nunca se asignan solos</strong>. Revisa la correspondencia al usarla en una actividad.</p>` },
+  calendar: { title: 'Cómo funciona: calendario del centro', html: () => `
+    <ol class="hc-steps">
+      <li><b>Pulsa ${T('Formato para IA')}</b> para copiar las instrucciones.</li>
+      <li><b>En la IA</b>: pega las instrucciones y adjunta el calendario escolar oficial (PDF o una foto). La IA extraerá inicio, fin y días no lectivos.</li>
+      <li><b>Pega la respuesta</b> abajo (o selecciona el archivo JSON) y pulsa ${P('Validar y guardar')}.</li>
+      <li><b>Comprueba</b> el resumen: fechas de inicio y fin y número de días no lectivos. Si falta algún festivo local, pídele a la IA que lo añada y repite.</li>
+    </ol>
+    <p>Se hace <strong>una sola vez por curso escolar</strong> y sirve para todas tus materias. Después configura en cada materia los días de clase del grupo. ${T('Exportar JSON')} te permite pasárselo a un compañero del mismo centro.</p>` },
+  studentsPaste: { title: 'Cómo funciona: pegar un listado', html: () => `
+    <ol class="hc-steps">
+      <li><b>Copia los nombres</b> desde Excel, ÍTACA o un documento: una persona por línea.</li>
+      <li><b>Pégalos abajo</b> y pulsa ${P('Previsualizar listado')}.</li>
+      <li><b>Si hay varias columnas</b> (por ejemplo, apellidos y nombre): la app te preguntará qué es cada una.</li>
+      <li><b>Revisa la vista previa y confirma.</b> Solo entonces se añaden al alumnado de esta materia.</li>
+    </ol>
+    <p>Los nombres se quedan en este dispositivo. ${NO_DATA_IA}</p>` },
+  programmingPreview: { title: 'Qué pasa si confirmas', html: () => `
+    <p>Esto es solo una <strong>vista previa</strong>: todavía no se ha guardado nada. Comprueba que el número de unidades, sesiones, actividades y criterios se corresponde con tu programación.</p>
+    <ul><li>${P('Confirmar importación')}: se crea la materia (o se añade la parte) con esa estructura. Puedes ${T('Deshacer')} justo después.</li>
+    <li>${T('Volver al JSON')}: para corregir el texto pegado.</li>
+    <li>Si los números no cuadran, no confirmes: pide a la IA que revise esa parte.</li></ul>` }
+};
+function detectImport(box){
+  if(box.querySelector('#programmingJson')) return targetCourse() ? 'programmingPart' : 'programmingCreate';
+  if(box.querySelector('#criteriaJson')) return 'criteria';
+  if(box.querySelector('#weightsJson')) return 'weights';
+  if(box.querySelector('#rubricJson')) return 'rubric';
+  if(box.querySelector('#schoolCalendarJson')) return 'calendar';
+  if(box.querySelector('#studentsPaste')) return 'studentsPaste';
+  const h = box.querySelector('h2');
+  if(h && /^(Vista previa de programación|Parte de programación detectada)$/.test(h.textContent.trim())) return 'programmingPreview';
+  return null;
+}
+const COLLAPSE_KEY = 'cuaderno.web.ayudaPlegada.';
+function hookImportHelp(){
+  const modal = document.getElementById('modal'), box = document.getElementById('modalBox');
+  if(!modal || !box || !modal.classList.contains('open')) return;
+  const kind = detectImport(box);
+  const existing = box.querySelector('.hc-imp');
+  if(!kind){ return; }
+  if(existing && existing.dataset.kind === kind) return;
+  if(existing) existing.remove();
+  let collapsed = false; try { collapsed = localStorage.getItem(COLLAPSE_KEY + kind) === '1'; } catch {}
+  const d = document.createElement('details');
+  d.className = 'hc-imp no-print'; d.dataset.kind = kind; d.open = kind === 'programmingPart' || !collapsed;
+  d.innerHTML = `<summary>${IMPORTS[kind].title}<small>${d.open ? 'ocultar' : 'mostrar'}</small></summary><div class="hc-in">${IMPORTS[kind].html()}</div>`;
+  d.addEventListener('toggle', () => { d.querySelector('summary small').textContent = d.open ? 'ocultar' : 'mostrar'; try { localStorage.setItem(COLLAPSE_KEY + kind, d.open ? '0' : '1'); } catch {} });
+  d.addEventListener('click', e => {
+    const a = e.target.closest('[data-hc-act]'); if(!a) return;
+    const status = d.querySelector('[data-hc-status]');
+    if(a.dataset.hcAct === 'copy-next') copyText('SIGUIENTE', status, 'Copiado. Pégalo en la misma conversación de la IA.');
+    if(a.dataset.hcAct === 'copy-cont'){ const c = targetCourse(), st = partState(c); if(st.ok) copyText(continuationPrompt(c, st), status, 'Mensaje copiado. Pégalo en la IA, adjunta tu programación y completa «Contenido de esta parte».'); }
+  });
+  const title = box.querySelector('.modal-title') || box.querySelector('h2');
+  if(title) title.after(d); else box.prepend(d);
+}
+
+/* ---------- limpieza del JSON pegado desde una IA (```json, frases antes o después) ---------- */
+function extractJson(text){
+  const t = String(text || '');
+  try { JSON.parse(t); return null; } catch {}
+  const start = t.indexOf('{'), end = t.lastIndexOf('}');
+  if(start < 0 || end <= start) return null;
+  const candidate = t.slice(start, end + 1);
+  try { JSON.parse(candidate); return candidate; } catch { return null; }
+}
+const CLEAN = [['createProgrammingCourse', 'programmingJson'], ['submitCriteriaJson', 'criteriaJson'], ['previewWeightsImport', 'weightsJson'], ['previewRubricJson', 'rubricJson'], ['saveSchoolCalendar', 'schoolCalendarJson']];
+function wrapCleaners(){
+  for(const [fn, id] of CLEAN){
+    const orig = window[fn];
+    if(typeof orig !== 'function' || orig.__hcWrapped) continue;
+    const wrapped = function(){
+      const area = document.getElementById(id);
+      if(area){ const clean = extractJson(area.value); if(clean !== null) area.value = clean; }
+      return orig.apply(this, arguments);
+    };
+    wrapped.__hcWrapped = true; window[fn] = wrapped;
+  }
+}
+
+let scheduled = false;
+function tick(){
+  scheduled = false;
+  try { wrapCleaners(); hookPageButton(); hookImportHelp(); } catch(e){ console.warn('Ayuda contextual:', e); }
+}
+new MutationObserver(() => { if(!scheduled){ scheduled = true; requestAnimationFrame(tick); } }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+window.CuadernoAyuda = { openPage: openDrawer, close: closeDrawer, _extractJson: extractJson };
+})();
+</script>

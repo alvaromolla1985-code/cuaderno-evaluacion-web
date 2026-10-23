@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inserta (o actualiza) el tutorial web en index.html.
+"""Inserta (o actualiza) el tutorial web y la ayuda contextual en index.html.
 
 Uso, desde la carpeta de la versión web:
     python3 tutorial/aplicar-tutorial.py
@@ -13,10 +13,13 @@ import pathlib, re, sys, time
 
 root = pathlib.Path(__file__).resolve().parent.parent
 index = root / 'index.html'
+START, END = '<!-- TUTORIAL-WEB:INICIO -->', '<!-- TUTORIAL-WEB:FIN -->'
 block = (root / 'tutorial' / 'tutorial-web.html').read_bytes().decode('utf-8').strip()
+ayuda = root / 'tutorial' / 'ayuda-contextual.part.html'
+if ayuda.exists():  # ayuda por pestaña e importación, dentro del mismo bloque
+    block = block.replace(END, ayuda.read_bytes().decode('utf-8').strip() + '\n' + END)
 html = index.read_bytes().decode('utf-8')
 
-START, END = '<!-- TUTORIAL-WEB:INICIO -->', '<!-- TUTORIAL-WEB:FIN -->'
 if START in html:
     html = re.sub(re.escape(START) + r'.*?' + re.escape(END), lambda _: block, html, count=1, flags=re.S)
     action = 'actualizado'
