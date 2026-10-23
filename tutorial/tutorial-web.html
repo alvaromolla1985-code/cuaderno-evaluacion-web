@@ -1,0 +1,335 @@
+<!-- TUTORIAL-WEB:INICIO -->
+<!-- Tutorial incorporado (solo versión web). Fuente: tutorial/tutorial-web.html
+     Se inserta en index.html con tutorial/aplicar-tutorial.py. No modifica datos del cuaderno. -->
+<style>
+.wt-dialog{max-width:760px;padding:0;display:flex;flex-direction:column;overflow:hidden}
+.wt-head{display:flex;align-items:center;gap:12px;padding:16px 22px 12px;border-bottom:1px solid var(--line)}
+.wt-head h2{margin:0;font-size:19px;flex:1}
+.wt-step-label{font-size:12px;color:var(--muted);white-space:nowrap}
+.wt-close{border:0;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--muted);padding:4px 8px;border-radius:8px}
+.wt-close:hover{background:#eef2f6}
+.wt-progress{display:flex;gap:6px;padding:10px 22px 0}
+.wt-progress button{flex:1;height:6px;border:0;border-radius:3px;background:#dfe4ea;cursor:pointer;padding:0}
+.wt-progress button.done{background:#9cc0f5}.wt-progress button.current{background:#1765e9}
+.wt-body{padding:14px 22px 6px;overflow:auto;line-height:1.55;font-size:15px}
+.wt-body h3{margin:16px 0 6px;font-size:15px}
+.wt-body p{margin:8px 0}
+.wt-body ol,.wt-body ul{padding-left:22px;margin:8px 0}.wt-body li{margin:5px 0}
+.wt-foot{display:flex;gap:8px;align-items:center;padding:12px 22px 16px;border-top:1px solid var(--line);flex-wrap:wrap}
+.wt-foot .wt-spacer{flex:1}
+.wt-lead{font-size:16px}
+.wt-flow{display:flex;align-items:stretch;gap:6px;flex-wrap:wrap;margin:14px 0}
+.wt-box{flex:1;min-width:150px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:#f8fafc;text-align:center;font-size:14px}
+.wt-box b{display:block;font-size:14px;margin-bottom:2px}
+.wt-box .wt-ico{font-size:26px;display:block;margin-bottom:4px}
+.wt-arrow{display:grid;place-items:center;font-size:12px;color:var(--muted);min-width:70px;text-align:center}
+.wt-arrow span{display:block;font-size:22px;line-height:1;color:#1765e9}
+.wt-file{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:6px 12px;background:#fff;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.wt-file::before{content:"📄";font-family:initial}
+.wt-key{display:inline-block;border:1px solid #c9d3df;border-bottom-width:2px;border-radius:7px;padding:1px 8px;background:#fff;font-size:13px;font-weight:600;white-space:nowrap}
+.wt-key.primary{background:#1765e9;border-color:#0f4fbf;color:#fff}
+.wt-tip{border-left:4px solid #1765e9;background:#eef4fd;padding:10px 12px;border-radius:0 10px 10px 0;margin:12px 0}
+.wt-warn{border-left:4px solid #b45309;background:#fff7e6;padding:10px 12px;border-radius:0 10px 10px 0;margin:12px 0}
+.wt-table{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0}
+.wt-table th,.wt-table td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+.wt-table th{background:#f4f6f8}
+.wt-chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:13px;font-weight:600}
+.wt-chip.ok{background:#effaf3;color:#14532d}.wt-chip.warn{background:#fff7e6;color:#7a3e00}.wt-chip.bad{background:#fdecec;color:#7f1d1d}
+.wt-done{color:#15803d;font-weight:600}
+.wt-help{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#eef4fd;border:1px solid #cfe0fa;border-radius:10px;padding:8px 12px;margin:0 0 12px;font-size:14px}
+.wt-help strong{margin-right:auto}
+.wt-badge{display:inline-block;margin-left:5px;padding:0 6px;border-radius:999px;background:#c2410c;color:#fff;font-size:11px;font-weight:700;vertical-align:1px}
+.wt-link{background:none;border:0;padding:0;color:#1765e9;text-decoration:underline;cursor:pointer;font:inherit}
+@media (max-width:560px){.wt-arrow{min-width:100%;padding:2px 0}.wt-arrow span{transform:rotate(90deg)}.wt-head,.wt-body,.wt-foot,.wt-progress{padding-left:14px;padding-right:14px}}
+@media print{.wt-help{display:none!important}}
+</style>
+<script>
+/* tutorial-web.js · Tutorial incorporado de la versión web.
+   - Se abre solo la primera vez (antes de elegir cómo empezar) y siempre desde «¿Cómo funciona?».
+   - Ayuda en contexto en: barra de copias, «Datos y copias», recordatorio de copia y «Crear desde programación».
+   - Al validar un JSON pegado desde una IA, quita el texto sobrante (```json, frases antes o después).
+   No lee ni guarda datos del alumnado: solo una marca local «tutorial visto». */
+(function(){
+'use strict';
+const SEEN_KEY = 'cuaderno.web.tutorialVisto';
+const seen = () => { try { return localStorage.getItem(SEEN_KEY) === '1'; } catch { return false; } };
+const markSeen = () => { try { localStorage.setItem(SEEN_KEY, '1'); } catch {} };
+
+const ua = navigator.userAgent || '';
+const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isSafari = /Safari/.test(ua) && !/Chrome|Chromium|CriOS|Edg|EdgiOS|FxiOS|Firefox|OPR/.test(ua);
+const isMac = !isIOS && /Macintosh/.test(ua);
+const fsSupported = typeof window.showSaveFilePicker === 'function';
+const hasData = () => { try { return typeof APP !== 'undefined' && APP && Array.isArray(APP.courses) && APP.courses.length > 0; } catch { return false; } };
+
+function whereDownload(){
+  if(isIOS) return `<p><strong>En tu iPad o iPhone:</strong> Safari te pedirá confirmar la descarga (pulsa <span class="wt-key">Descargar</span>). El archivo queda en la app <strong>Archivos → Descargas</strong>. En algunas versiones, en lugar de descargar se abre una vista del archivo: pulsa <span class="wt-key">Compartir</span> → <span class="wt-key">Guardar en Archivos</span>.</p>`;
+  if(isMac && isSafari) return `<p><strong>En tu Mac con Safari:</strong> el archivo va a la carpeta <strong>Descargas</strong> (Finder → Descargas, o el icono de la flecha ⬇ de Safari).</p>`;
+  return `<p><strong>En este ordenador:</strong> el archivo va a la carpeta <strong>Descargas</strong>. Lo verás en el icono de descargas del navegador (⬇).</p>`;
+}
+function wherePick(){
+  if(isIOS) return 'Se abrirá la app <strong>Archivos</strong>: busca en <strong>Descargas</strong> (o donde guardaste la copia) y toca el archivo.';
+  return 'Se abrirá una ventana para elegir archivo: ve a <strong>Descargas</strong> (o donde guardaste la copia) y elige el archivo.';
+}
+
+const STEPS = [
+  { title: 'Bienvenida', html: () => `
+    <p class="wt-lead">En unos 3 minutos sabrás lo único imprescindible para usar el cuaderno <strong>sin perder nunca tus datos</strong>.</p>
+    <ol>
+      <li>Dónde se guarda lo que escribes.</li>
+      <li>Qué es un «archivo JSON» (y por qué no tienes que entenderlo).</li>
+      <li>Cómo guardar una copia.</li>
+      <li>Cómo recuperarla o pasarla a otro dispositivo.</li>
+      <li>Cómo crear una materia a partir de tu programación con ayuda de una IA.</li>
+      <li>La rutina recomendada.</li>
+    </ol>
+    <div class="wt-tip">Puedes volver a este tutorial cuando quieras con el botón <span class="wt-key">¿Cómo funciona?</span> de la barra superior.</div>` },
+
+  { title: 'Dónde están tus datos', html: () => `
+    <p>Esta app <strong>no tiene servidor ni cuenta de usuario</strong>. Todo lo que escribes se guarda automáticamente <strong>dentro de este navegador, en este dispositivo</strong>. No tienes que pulsar «Guardar» para seguir trabajando.</p>
+    <div class="wt-flow">
+      <div class="wt-box"><span class="wt-ico">🖥️</span><b>Este navegador</b>Aquí trabajas. Se guarda solo.</div>
+      <div class="wt-arrow"><span>→</span>Guardar copia</div>
+      <div class="wt-box"><span class="wt-ico">📄</span><b>Archivo de copia</b>Queda en tu dispositivo.</div>
+      <div class="wt-arrow"><span>→</span>Restaurar</div>
+      <div class="wt-box"><span class="wt-ico">💻</span><b>Otro dispositivo o navegador</b>Lo recuperas tal cual.</div>
+    </div>
+    <div class="wt-warn"><strong>El riesgo:</strong> si se borran los datos del navegador (limpieza de historial, navegación privada, cambio de navegador o de dispositivo, o Safari tras varios días sin abrir la app), el cuaderno desaparece. <strong>La única protección es el archivo de copia.</strong></div>` },
+
+  { title: '¿Qué es un archivo JSON?', html: () => `
+    <p>Un archivo JSON es, simplemente, <strong>una fotocopia de tu cuaderno metida en un archivo</strong>. Tiene la terminación <code>.json</code>, igual que un documento de Word termina en <code>.docx</code>.</p>
+    <p><span class="wt-file">cuaderno-evaluacion.json</span></p>
+    <ul>
+      <li><strong>No necesitas abrirlo ni entenderlo.</strong> La app lo crea y la app lo lee.</li>
+      <li>Si lo abres por curiosidad verás texto con llaves <code>{ }</code> y comillas. Es normal. <strong>No lo edites</strong>: un solo carácter cambiado puede dejarlo inservible.</li>
+      <li>Contiene datos personales del alumnado: trátalo como tratarías tu cuaderno de papel.</li>
+    </ul>
+    <h3>En la app hay tres tipos de JSON. No los confundas:</h3>
+    <table class="wt-table">
+      <tr><th>Archivo</th><th>Qué contiene</th><th>Dónde se usa</th></tr>
+      <tr><td><strong>Copia completa</strong><br><small>cuaderno-evaluacion.json</small></td><td>Todo: todas tus materias, alumnado y notas.</td><td><span class="wt-key">Restaurar copia completa</span></td></tr>
+      <tr><td><strong>Copia de una materia</strong><br><small>…-evaluacion.json</small></td><td>Solo una materia.</td><td><span class="wt-key">Importar copia de materia</span></td></tr>
+      <tr><td><strong>Programación hecha por una IA</strong></td><td>Criterios, unidades y actividades, sin alumnado ni notas.</td><td><span class="wt-key">Crear desde programación de aula</span></td></tr>
+    </table>` },
+
+  { title: 'Guardar una copia', html: () => `
+    <p>Estos botones hacen <strong>exactamente lo mismo</strong>: descargan la copia completa de tu cuaderno.</p>
+    <ul>
+      <li><span class="wt-key primary">Guardar copia ahora</span> en la barra de colores de arriba.</li>
+      <li><span class="wt-key">Guardar copia completa</span> en la pantalla de inicio (Materias).</li>
+      <li><span class="wt-key">Copia JSON</span> arriba a la derecha, dentro de una materia.</li>
+    </ul>
+    <h3>¿Dónde queda el archivo?</h3>
+    ${whereDownload()}
+    <div class="wt-tip"><strong>Truco:</strong> si guardas varias copias, el navegador las llamará <code>cuaderno-evaluacion.json</code>, <code>cuaderno-evaluacion (1).json</code>, <code>(2)</code>… <strong>La buena es siempre la más reciente.</strong> Si quieres, renómbrala con la fecha (por ejemplo <code>cuaderno-2026-10-23.json</code>); la app la seguirá leyendo.</div>
+    <div class="wt-warn"><strong>Protección de datos:</strong> mueve la copia a un espacio autorizado por tu centro o la Administración. No la envíes por correo ni la compartas.</div>
+    ${fsSupported ? `<p><strong>Opción cómoda en este navegador:</strong> en <span class="wt-key">Datos y copias</span> → <span class="wt-key">Elegir archivo de copia automática</span>, la app guardará la copia sola después de cada cambio.</p>` : ''}
+    <div class="wt-tip" id="wtPractice">${hasData()
+      ? `<strong>Pruébalo ahora:</strong> <button type="button" class="btn small primary" data-wt="backup">Guardar mi copia ahora</button> <span id="wtBackupDone" class="wt-done" hidden>✓ Copia descargada. Búscala en Descargas.</span>`
+      : `Aún no tienes materias. Cuando crees la primera, haz tu primera copia con <span class="wt-key primary">Guardar copia ahora</span>.`}</div>` },
+
+  { title: 'Recuperar una copia o cambiar de dispositivo', html: () => `
+    <h3>Para recuperar tu cuaderno (o pasarlo a otro dispositivo)</h3>
+    <ol>
+      <li>En el dispositivo antiguo, guarda una copia (paso anterior).</li>
+      <li>Haz llegar el archivo al nuevo dispositivo por un medio autorizado por tu centro.</li>
+      <li>En el nuevo, abre la app y pulsa <span class="wt-key">Restaurar copia completa</span> (en Materias) o <span class="wt-key">Datos y copias</span> → <span class="wt-key">Restaurar una copia…</span>.</li>
+      <li>${wherePick()}</li>
+    </ol>
+    <div class="wt-warn"><strong>Atención:</strong> restaurar una copia completa <strong>sustituye todo</strong> lo que haya ahora en este navegador por el contenido del archivo. Elige siempre la copia más reciente. Si te equivocas, pulsa <span class="wt-key">Deshacer</span> antes de hacer nada más.</div>
+    <h3>¿Solo quieres traer una materia?</h3>
+    <p>Usa <span class="wt-key">Importar copia de materia</span>: añade esa materia <strong>sin borrar</strong> las demás.</p>
+    <p class="muted">Las copias son compatibles con la versión de escritorio de la app.</p>` },
+
+  { title: 'Crear una materia con ayuda de una IA', html: () => `
+    <p>Si tienes tu programación de aula en un documento, una IA (ChatGPT, Claude, Gemini…) puede convertirla en un JSON que la app entiende. Así no tienes que teclear criterios, unidades ni actividades.</p>
+    <ol>
+      <li>Pulsa <span class="wt-key primary">Crear materia</span> → <span class="wt-key">Crear desde programación de aula</span>.</li>
+      <li>Pulsa <span class="wt-key">Copiar instrucciones para IA</span> (está en el recuadro azul de ayuda de esa ventana).</li>
+      <li>Abre tu IA, <strong>pega</strong> las instrucciones y <strong>adjunta</strong> el documento de tu programación.</li>
+      <li>La IA responderá con un bloque de texto que empieza por <code>{</code>. Cópialo <strong>entero</strong> (muchas IA tienen un botón «Copiar» sobre el bloque).</li>
+      <li>Vuelve a la app, pégalo en el recuadro y pulsa <span class="wt-key primary">Validar y crear materia</span>.</li>
+      <li>Revisa el resumen (número de unidades, actividades, criterios) y pulsa <span class="wt-key primary">Confirmar importación</span>.</li>
+    </ol>
+    <div class="wt-tip"><strong>Programaciones largas:</strong> la IA te dará la primera parte. Impórtala, entra en la materia, pulsa <span class="wt-key">Añadir parte de programación</span>, escribe <strong>SIGUIENTE</strong> en la IA y pega la nueva parte. Repite hasta terminar.</div>
+    <div class="wt-tip"><strong>Si da error:</strong> no pasa nada, no se ha guardado nada. Pide a la IA que «corrija esa misma parte» y vuelve a pegarla. No hace falta que borres las frases que la IA escribe antes o después del bloque: la app las ignora.</div>
+    <div class="wt-warn"><strong>Nunca pegues en una IA nombres ni datos del alumnado.</strong> Solo la programación.</div>
+    <p><button type="button" class="btn small" data-wt="programming">Abrir «Crear desde programación de aula»</button></p>` },
+
+  { title: 'Tu rutina', html: () => `
+    <p>La barra de colores de arriba te dice en todo momento cómo estás:</p>
+    <ul>
+      <li><span class="wt-chip ok">Verde</span> tu última copia está al día.</li>
+      <li><span class="wt-chip warn">Amarillo</span> has hecho cambios desde la última copia.</li>
+      <li><span class="wt-chip bad">Rojo</span> nunca has hecho copia o hace más de una semana. Haz una ya.</li>
+    </ul>
+    <h3>Rutina recomendada</h3>
+    <ul>
+      <li>Guarda una copia <strong>al final de cada semana</strong> en la que hayas puesto notas.</li>
+      <li>Siempre <strong>antes de cada sesión de evaluación</strong> y <strong>antes de vacaciones</strong>.</li>
+      <li>Usa la app siempre <strong>desde el mismo navegador</strong> (mejor instalada como app) y en <strong>una sola pestaña</strong>.</li>
+      <li>Las calificaciones oficiales siguen yendo a ÍTACA: esta app es tu cuaderno personal.</li>
+    </ul>
+    <p class="wt-lead"><strong>Regla de oro:</strong> si no está en un archivo de copia, no está a salvo.</p>` }
+];
+
+let current = 0, onClose = null;
+function render(){
+  const el = document.getElementById('webTutorial'); if(!el) return;
+  const s = STEPS[current], last = current === STEPS.length - 1;
+  el.querySelector('.wt-dialog').innerHTML = `
+    <div class="wt-head"><h2 id="wtTitle">${s.title}</h2><span class="wt-step-label">Paso ${current + 1} de ${STEPS.length}</span>
+      <button type="button" class="wt-close" data-wt="close" aria-label="Cerrar tutorial">×</button></div>
+    <div class="wt-progress" role="tablist" aria-label="Pasos del tutorial">${STEPS.map((x, i) =>
+      `<button type="button" role="tab" aria-selected="${i === current}" class="${i === current ? 'current' : i < current ? 'done' : ''}" data-wt-go="${i}" aria-label="Paso ${i + 1}: ${x.title}" title="${x.title}"></button>`).join('')}</div>
+    <div class="wt-body" aria-live="polite">${s.html()}</div>
+    <div class="wt-foot">
+      ${current === 0 ? '<button type="button" class="btn" data-wt="close">Ahora no</button>' : '<button type="button" class="btn" data-wt="prev">← Anterior</button>'}
+      <span class="wt-spacer"></span>
+      <button type="button" class="btn primary" data-wt="${last ? 'finish' : 'next'}" data-autofocus>${last ? 'Entendido, empezar' : current === 0 ? 'Empezar el tutorial →' : 'Siguiente →'}</button>
+    </div>`;
+  const body = el.querySelector('.wt-body'); if(body) body.scrollTop = 0;
+  const f = el.querySelector('[data-autofocus]'); if(f) f.focus();
+}
+function open(step = 0, closeCallback = null){
+  current = Math.max(0, Math.min(STEPS.length - 1, step | 0)); onClose = closeCallback;
+  let el = document.getElementById('webTutorial');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'webTutorial'; el.className = 'web-overlay no-print';
+    el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-labelledby', 'wtTitle');
+    el.innerHTML = '<div class="web-dialog wt-dialog"></div>';
+    el.addEventListener('click', onClick);
+    el.addEventListener('keydown', e => {
+      if(e.key === 'Escape'){ e.preventDefault(); close(); }
+      else if(e.key === 'ArrowRight' && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)){ if(current < STEPS.length - 1){ current++; render(); } }
+      else if(e.key === 'ArrowLeft' && !/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)){ if(current > 0){ current--; render(); } }
+    });
+    document.body.appendChild(el);
+  }
+  const app = document.getElementById('app'); if(app) app.inert = true;
+  render();
+}
+function close(){
+  markSeen();
+  const el = document.getElementById('webTutorial'); if(el) el.remove();
+  if(window.CuadernoWeb && typeof CuadernoWeb.closeOverlay === 'function') CuadernoWeb.closeOverlay('webTutorial');
+  else if(!document.querySelector('.web-overlay')){ const app = document.getElementById('app'); if(app) app.inert = false; }
+  const cb = onClose; onClose = null; if(cb) cb();
+  refreshBarButton();
+}
+function onClick(e){
+  const el = document.getElementById('webTutorial');
+  if(e.target === el){ close(); return; }
+  const go = e.target.closest('[data-wt-go]');
+  if(go){ current = Number(go.getAttribute('data-wt-go')); render(); return; }
+  const btn = e.target.closest('[data-wt]'); if(!btn) return;
+  const action = btn.getAttribute('data-wt');
+  if(action === 'close' || action === 'finish') close();
+  else if(action === 'next'){ current = Math.min(STEPS.length - 1, current + 1); render(); }
+  else if(action === 'prev'){ current = Math.max(0, current - 1); render(); }
+  else if(action === 'backup'){
+    if(typeof window.exportAll === 'function'){
+      window.exportAll();
+      const done = document.getElementById('wtBackupDone'); if(done) done.hidden = false;
+    }
+  }
+  else if(action === 'programming'){
+    close();
+    if(typeof window.openProgrammingCourse === 'function'){
+      if(document.getElementById('webStart') && window.CuadernoWeb) CuadernoWeb.closeOverlay('webStart');
+      window.openProgrammingCourse();
+    }
+  }
+}
+
+/* ---------- limpieza del JSON pegado desde una IA ---------- */
+function extractJson(text){
+  const t = String(text || '');
+  try { JSON.parse(t); return null; } catch {}
+  const start = t.indexOf('{'), end = t.lastIndexOf('}');
+  if(start < 0 || end <= start) return null;
+  const candidate = t.slice(start, end + 1);
+  try { JSON.parse(candidate); return candidate; } catch { return null; }
+}
+function wrapProgrammingImport(){
+  const orig = window.createProgrammingCourse;
+  if(typeof orig !== 'function' || orig.__wtWrapped) return;
+  const wrapped = function(){
+    const area = document.getElementById('programmingJson');
+    if(area){ const clean = extractJson(area.value); if(clean !== null) area.value = clean; }
+    return orig.apply(this, arguments);
+  };
+  wrapped.__wtWrapped = true;
+  window.createProgrammingCourse = wrapped;
+}
+
+/* ---------- enganches en la interfaz existente ---------- */
+function refreshBarButton(){
+  const actions = document.querySelector('#webBackupBar .web-bar-actions'); if(!actions) return;
+  let b = document.getElementById('wtBarBtn');
+  if(!b){
+    b = document.createElement('button');
+    b.id = 'wtBarBtn'; b.type = 'button'; b.className = 'btn small';
+    b.addEventListener('click', () => open(0));
+  }
+  const html = '¿Cómo funciona?' + (seen() ? '' : '<span class="wt-badge">Nuevo</span>');
+  if(b.innerHTML !== html) b.innerHTML = html;
+  if(b.parentNode !== actions) actions.insertBefore(b, actions.firstChild);
+}
+function hookDataPanel(){
+  const body = document.getElementById('webPanelBody'); if(!body || document.getElementById('wtPanelBtn')) return;
+  const actions = body.querySelector(':scope > .web-actions:last-child'); if(!actions) return;
+  const b = document.createElement('button');
+  b.id = 'wtPanelBtn'; b.type = 'button'; b.className = 'btn'; b.textContent = 'Tutorial: copias y JSON';
+  b.addEventListener('click', () => open(2));
+  actions.insertBefore(b, actions.firstChild);
+}
+function hookReminder(){
+  const r = document.querySelector('#webReminder .web-dialog'); if(!r || document.getElementById('wtReminderLink')) return;
+  const p = document.createElement('p');
+  p.id = 'wtReminderLink';
+  p.innerHTML = '<button type="button" class="wt-link">¿Qué es una copia y dónde se guarda?</button>';
+  p.querySelector('button').addEventListener('click', () => open(3));
+  const actions = r.querySelector('.web-actions'); r.insertBefore(p, actions || null);
+}
+function hookProgramming(){
+  wrapProgrammingImport();
+  const area = document.getElementById('programmingJson'); if(!area || document.getElementById('wtAiHelp')) return;
+  const box = document.getElementById('modalBox'); if(!box) return;
+  const div = document.createElement('div');
+  div.id = 'wtAiHelp'; div.className = 'wt-help no-print';
+  div.innerHTML = '<strong>¿Primera vez?</strong><button type="button" class="btn small primary" data-a="copy">1. Copiar instrucciones para IA</button><button type="button" class="btn small" data-a="guide">Ver paso a paso</button>';
+  div.addEventListener('click', e => {
+    const a = e.target.closest('[data-a]'); if(!a) return;
+    if(a.dataset.a === 'copy' && typeof window.copyProgrammingInstructions === 'function') window.copyProgrammingInstructions();
+    if(a.dataset.a === 'guide') open(5);
+  });
+  area.parentNode.insertBefore(div, area);
+}
+let firstRunHandled = false;
+function hookFirstRun(){
+  if(firstRunHandled || seen()) return;
+  const start = document.getElementById('webStart');
+  if(!start || document.getElementById('webNotices')) return;
+  firstRunHandled = true;
+  start.style.display = 'none';
+  open(0, () => {
+    const s = document.getElementById('webStart');
+    if(s){ s.style.display = ''; const app = document.getElementById('app'); if(app) app.inert = true; const f = s.querySelector('[data-autofocus]'); if(f) f.focus(); }
+  });
+}
+let scheduled = false;
+function tick(){
+  scheduled = false;
+  try { refreshBarButton(); hookDataPanel(); hookReminder(); hookProgramming(); hookFirstRun(); }
+  catch(e){ console.warn('Tutorial web:', e); }
+}
+function schedule(){ if(!scheduled){ scheduled = true; requestAnimationFrame(tick); } }
+new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+schedule();
+
+window.CuadernoTutorial = { open, close };
+})();
+</script>
+<!-- TUTORIAL-WEB:FIN -->

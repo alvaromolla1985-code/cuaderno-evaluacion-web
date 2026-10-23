@@ -29,3 +29,10 @@ Sube TODO el contenido de esta carpeta (index.html, sw.js, manifest.webmanifest 
 a un alojamiento web estático con https: web del centro, GitHub Pages, etc.
 El alojamiento solo sirve los archivos de la app: nunca recibe datos del alumnado.
 Para actualizar, sustituye los archivos; la app se actualiza sola al abrirse con conexión.
+
+TUTORIAL INCORPORADO (SOLO VERSIÓN WEB)
+La web incluye un tutorial paso a paso (botón «¿Cómo funciona?» de la barra superior; se abre solo la primera vez).
+Su código está en tutorial/tutorial-web.html y NO forma parte de la versión de escritorio.
+IMPORTANTE: si vuelves a generar index.html desde la versión de escritorio, el tutorial desaparece.
+Después de regenerar, ejecuta en esta carpeta:  python3 tutorial/aplicar-tutorial.py
+(lo vuelve a insertar sin duplicarlo y renueva la caché de sw.js). Luego sube los cambios.
