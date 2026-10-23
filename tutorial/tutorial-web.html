@@ -40,6 +40,26 @@
 .wt-help strong{margin-right:auto}
 .wt-badge{display:inline-block;margin-left:5px;padding:0 6px;border-radius:999px;background:#c2410c;color:#fff;font-size:11px;font-weight:700;vertical-align:1px}
 .wt-link{background:none;border:0;padding:0;color:#1765e9;text-decoration:underline;cursor:pointer;font:inherit}
+.wt-hero{position:relative;display:flex;gap:22px;align-items:center;margin:0 0 24px;padding:24px 26px;border-radius:18px;background:linear-gradient(135deg,#1765e9 0%,#3b82f6 55%,#60a5fa 100%);color:#fff;box-shadow:0 14px 34px rgba(23,101,233,.28)}
+.wt-hero-icon{flex:0 0 auto;display:grid;place-items:center;width:84px;height:84px;border-radius:22px;background:rgba(255,255,255,.18);font-size:44px}
+.wt-hero-text{flex:1;min-width:0}
+.wt-hero h2{margin:0 0 6px;font-size:24px;line-height:1.2;color:#fff}
+.wt-hero p{margin:0 0 14px;font-size:16px;line-height:1.5;opacity:.95}
+.wt-hero-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.wt-hero .wt-hero-go{font-size:17px;font-weight:700;padding:13px 22px;border-radius:12px;border:0;background:#fff;color:#0f4fbf;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.15)}
+.wt-hero .wt-hero-go:hover{background:#eef4fd}
+.wt-hero .wt-hero-skip{background:none;border:1px solid rgba(255,255,255,.6);color:#fff;border-radius:10px;padding:9px 14px;font-size:14px;cursor:pointer}
+.wt-hero .wt-hero-skip:hover{background:rgba(255,255,255,.12)}
+.wt-hero-steps{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap}
+.wt-hero-steps span{font-size:12px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.18)}
+.wt-hero-steps span.done{background:#fff;color:#0f4fbf;font-weight:700}
+#wtBarBtn.wt-hot{background:#c2410c;border-color:#c2410c;color:#fff;font-weight:700;font-size:14px;padding:6px 14px;box-shadow:0 0 0 0 rgba(194,65,12,.55);animation:wtPulse 2.2s ease-out infinite}
+@keyframes wtPulse{0%{box-shadow:0 0 0 0 rgba(194,65,12,.55)}70%{box-shadow:0 0 0 10px rgba(194,65,12,0)}100%{box-shadow:0 0 0 0 rgba(194,65,12,0)}}
+@media (prefers-reduced-motion:reduce){#wtBarBtn.wt-hot{animation:none}}
+.web-choice .btn.wt-start-tut{background:linear-gradient(135deg,#c2410c,#ea580c);border-color:#c2410c;color:#fff;min-height:76px}
+.web-choice .btn.wt-start-tut strong{font-size:17px}
+@media (max-width:640px){.wt-hero{flex-direction:column;align-items:flex-start;padding:20px}.wt-hero-icon{width:64px;height:64px;font-size:34px}.wt-hero h2{font-size:21px}.wt-hero .wt-hero-go{width:100%}}
+@media print{.wt-hero{display:none!important}}
 @media (max-width:560px){.wt-arrow{min-width:100%;padding:2px 0}.wt-arrow span{transform:rotate(90deg)}.wt-head,.wt-body,.wt-foot,.wt-progress{padding-left:14px;padding-right:14px}}
 @media print{.wt-help{display:none!important}}
 </style>
@@ -53,6 +73,12 @@
 const SEEN_KEY = 'cuaderno.web.tutorialVisto';
 const seen = () => { try { return localStorage.getItem(SEEN_KEY) === '1'; } catch { return false; } };
 const markSeen = () => { try { localStorage.setItem(SEEN_KEY, '1'); } catch {} };
+/* «Completado» (terminado o «Ya sé usarla») es distinto de «visto»: mientras no se complete, el tutorial se destaca en la pantalla de inicio. */
+const DONE_KEY = 'cuaderno.web.tutorialCompletado', STEP_KEY = 'cuaderno.web.tutorialPaso';
+const done = () => { try { return localStorage.getItem(DONE_KEY) === '1'; } catch { return false; } };
+const markDone = () => { try { localStorage.setItem(DONE_KEY, '1'); } catch {} };
+const lastStep = () => { try { return Math.max(0, Number(localStorage.getItem(STEP_KEY)) || 0); } catch { return 0; } };
+const saveStep = n => { try { if(n > lastStep()) localStorage.setItem(STEP_KEY, String(n)); } catch {} };
 
 const ua = navigator.userAgent || '';
 const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -176,6 +202,7 @@ const STEPS = [
 let current = 0, onClose = null;
 function render(){
   const el = document.getElementById('webTutorial'); if(!el) return;
+  saveStep(current);
   const s = STEPS[current], last = current === STEPS.length - 1;
   el.querySelector('.wt-dialog').innerHTML = `
     <div class="wt-head"><h2 id="wtTitle">${s.title}</h2><span class="wt-step-label">Paso ${current + 1} de ${STEPS.length}</span>
@@ -216,7 +243,7 @@ function close(){
   if(window.CuadernoWeb && typeof CuadernoWeb.closeOverlay === 'function') CuadernoWeb.closeOverlay('webTutorial');
   else if(!document.querySelector('.web-overlay')){ const app = document.getElementById('app'); if(app) app.inert = false; }
   const cb = onClose; onClose = null; if(cb) cb();
-  refreshBarButton();
+  refreshBarButton(); refreshHero();
 }
 function onClick(e){
   const el = document.getElementById('webTutorial');
@@ -225,7 +252,8 @@ function onClick(e){
   if(go){ current = Number(go.getAttribute('data-wt-go')); render(); return; }
   const btn = e.target.closest('[data-wt]'); if(!btn) return;
   const action = btn.getAttribute('data-wt');
-  if(action === 'close' || action === 'finish') close();
+  if(action === 'finish'){ markDone(); close(); }
+  else if(action === 'close') close();
   else if(action === 'next'){ current = Math.min(STEPS.length - 1, current + 1); render(); }
   else if(action === 'prev'){ current = Math.max(0, current - 1); render(); }
   else if(action === 'backup'){
@@ -252,9 +280,51 @@ function refreshBarButton(){
     b.id = 'wtBarBtn'; b.type = 'button'; b.className = 'btn small';
     b.addEventListener('click', () => open(0));
   }
-  const html = '¿Cómo funciona?' + (seen() ? '' : '<span class="wt-badge">Nuevo</span>');
+  const hot = !done() && isHome();
+  const html = hot ? '📘 Tutorial: empieza aquí' : '¿Cómo funciona?' + (done() || seen() ? '' : '<span class="wt-badge">Nuevo</span>');
   if(b.innerHTML !== html) b.innerHTML = html;
+  b.classList.toggle('wt-hot', hot);
   if(b.parentNode !== actions) actions.insertBefore(b, actions.firstChild);
+}
+function isHome(){ return !!document.querySelector('#app .redesigned-home, #app .home'); }
+function stepsDone(){ return done() ? STEPS.length : Math.min(lastStep(), STEPS.length); }
+function refreshHero(){
+  const head = document.querySelector('#app .redesigned-home .home-head') || document.querySelector('#app .home > h1');
+  let hero = document.getElementById('wtHero');
+  if(done() || !head){ if(hero) hero.remove(); return; }
+  const n = stepsDone(), resume = n > 0;
+  const html = `<div class="wt-hero-icon" aria-hidden="true">📘</div>
+    <div class="wt-hero-text">
+      <h2>${resume ? 'Termina el tutorial: te queda poco' : '¿Es tu primera vez? Empieza aquí'}</h2>
+      <p>En 3 minutos aprenderás lo imprescindible: dónde se guardan tus datos, cómo hacer una copia de seguridad, qué es un archivo JSON y cómo crear tus materias con ayuda de una IA.</p>
+      <div class="wt-hero-actions">
+        <button type="button" class="wt-hero-go" data-hero="go">▶ ${resume ? `Continuar el tutorial (paso ${Math.min(n + 1, STEPS.length)} de ${STEPS.length})` : 'Ver el tutorial (3 minutos)'}</button>
+        <button type="button" class="wt-hero-skip" data-hero="skip">Ya sé usarla, ocultar</button>
+      </div>
+      <div class="wt-hero-steps" aria-hidden="true">${STEPS.map((x, i) => `<span class="${i < n ? 'done' : ''}">${i < n ? '✓ ' : ''}${x.title}</span>`).join('')}</div>
+    </div>`;
+  if(!hero){
+    hero = document.createElement('section');
+    hero.id = 'wtHero'; hero.className = 'wt-hero no-print'; hero.setAttribute('aria-label', 'Tutorial de inicio');
+    hero.addEventListener('click', e => {
+      const a = e.target.closest('[data-hero]'); if(!a) return;
+      if(a.dataset.hero === 'go') open(Math.min(stepsDone(), STEPS.length - 1));
+      if(a.dataset.hero === 'skip'){ markDone(); markSeen(); refreshHero(); refreshBarButton(); }
+    });
+  }
+  if(hero.dataset.html !== html){ hero.innerHTML = html; hero.dataset.html = html; }
+  if(hero.nextElementSibling !== head) head.before(hero);   // arriba del todo: lo primero que se ve
+}
+function hookStartChoice(){
+  const choice = document.querySelector('#webStart .web-choice'); if(!choice || document.getElementById('wtStartTut')) return;
+  const b = document.createElement('button');
+  b.id = 'wtStartTut'; b.type = 'button'; b.className = 'btn wt-start-tut';
+  b.innerHTML = '<strong>📘 Ver primero el tutorial (3 min)</strong><span>Recomendado si es tu primera vez: copias, archivos JSON y crear materias con IA.</span>';
+  b.addEventListener('click', () => {
+    const s = document.getElementById('webStart'); if(s) s.style.display = 'none';
+    open(0, () => { const st = document.getElementById('webStart'); if(st){ st.style.display = ''; const app = document.getElementById('app'); if(app) app.inert = true; } });
+  });
+  choice.insertBefore(b, choice.firstChild);
 }
 function hookDataPanel(){
   const body = document.getElementById('webPanelBody'); if(!body || document.getElementById('wtPanelBtn')) return;
@@ -287,7 +357,7 @@ function hookFirstRun(){
 let scheduled = false;
 function tick(){
   scheduled = false;
-  try { refreshBarButton(); hookDataPanel(); hookReminder(); hookFirstRun(); }
+  try { refreshBarButton(); refreshHero(); hookStartChoice(); hookDataPanel(); hookReminder(); hookFirstRun(); }
   catch(e){ console.warn('Tutorial web:', e); }
 }
 function schedule(){ if(!scheduled){ scheduled = true; requestAnimationFrame(tick); } }
