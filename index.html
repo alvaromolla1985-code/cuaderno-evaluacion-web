@@ -180,6 +180,10 @@ table{border-collapse:separate;border-spacing:0;width:100%} th,td{padding:8px;bo
 .closing-scope{display:grid;gap:8px;padding:12px 14px;margin:10px 0 14px;background:#fff;border:1px solid var(--line);border-radius:12px}.closing-scope>div{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .closing-scope fieldset{display:flex;gap:6px;flex-wrap:wrap;align-items:center;border:0;padding:0;margin:0}.closing-scope legend{font-weight:700;margin-bottom:6px}
 .closing-table td{vertical-align:top}.closing-table details ul{margin:6px 0;padding-left:18px;max-width:640px}.closing-table li{margin:4px 0;white-space:pre-wrap}.closing-table td:last-child .btn{margin-top:6px}
+/* Seguimiento de la programación (solo consulta). */
+.follow-period{display:grid;gap:8px;padding:12px 14px;margin:10px 0}.follow-period .toolbar{margin:0;align-items:end}.follow-period label{display:grid;gap:4px}
+.follow-up table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.follow-up table td{vertical-align:top}.follow-events tr.warn td:first-child{box-shadow:inset 3px 0 #dc8a1d}.follow-blocks tr.error td:first-child{box-shadow:inset 3px 0 #d92d20}
+.follow-up h2{margin-top:24px}.follow-notes{padding:10px 14px;margin-top:14px}.follow-notes ul{margin:8px 0;padding-left:18px}.follow-notes li{margin:8px 0;white-space:pre-wrap}#followUpText{width:100%;font:inherit;line-height:1.55}
 /* Calendario de la programación. */
 .calendar-metrics{grid-template-columns:repeat(5,minmax(0,1fr))}.metric.is-late strong{color:#b42318}.metric.is-pending strong{color:#b45309}
 .calendar-next{margin:10px 0;font-size:15px}.calendar-setup{max-width:720px}.calendar-setup label,.calendar-weekdays{display:grid;gap:6px;margin:10px 0}.calendar-weekdays{display:flex;flex-wrap:wrap;border:0;padding:0}
@@ -948,6 +952,114 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     c.calendar.anchors=c.calendar.anchors.filter(a=>ids.has(a.sessionId));
     for(const id of Object.keys(c.calendar.tracking))if(!ids.has(id))delete c.calendar.tracking[id];
   }
+  /* Seguimiento de la programación (solo lectura; no cambia datos).
+     Referencia: impartir todas las sesiones antes del límite (último día de clase − margen final).
+     El margen actual se descompone exactamente en:
+       margen inicial (todas las clases hasta el límite − todas las sesiones, sin incidencias)
+       − días sin clase (hasta el límite) + días con dos sesiones (hasta el límite)
+       − sesiones parciales (ocupan una clase más) + sesiones suprimidas (liberan una clase). */
+  const FOLLOW_KINDS={lost:'Clase perdida',double:'Dos sesiones el mismo día',partial:'Sesión parcial',dropped:'Sesión suprimida'};
+  const shortDate=day=>day?day.slice(8,10)+'/'+day.slice(5,7)+'/'+day.slice(0,4):'—';
+  const stampDay=v=>typeof v==='string'?iso(v.slice(0,10)):'';
+  function followUp(c,school,{today='',from='',to=''}={}){
+    const p=plan(c,school,today);if(!p)return null;
+    const cal=c.calendar,teaching=new Set(p.days),lostSet=new Set(p.lost.map(x=>x.date));
+    from=iso(from)||school.start;to=iso(to)||today||school.end;if(to<from)[from,to]=[to,from];
+    const inPeriod=d=>!!d&&d>=from&&d<=to;
+    const baseCapacity=p.days.filter(d=>d<=p.limit).length,total=p.sessions.length,initialMargin=baseCapacity-total;
+    const events=[];
+    for(const x of p.lost)if(teaching.has(x.date))events.push({kind:'lost',date:x.date,effect:x.date<=p.limit?-1:0,reason:x.reason||''});
+    for(const d of p.doubles)if(teaching.has(d)&&!lostSet.has(d))events.push({kind:'double',date:d,effect:d<=p.limit?1:0,reason:''});
+    for(const s of p.sessions){
+      if(s.status!=='partial'&&s.status!=='dropped')continue;
+      const stamp=stampDay(cal.tracking[s.sessionId]?.updatedAt);
+      const date=s.status==='partial'?(s.dates[0]||stamp):(stamp||'');
+      events.push({kind:s.status,date,effect:s.status==='partial'?-1:1,reason:s.note||'',sessionId:s.sessionId,blockId:s.blockId,num:s.num,title:s.title});
+    }
+    events.sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'));
+    const margin=initialMargin+events.reduce((n,e)=>n+e.effect,0);
+    // Supuesto: un suprimido sin fecha registrada solo cuenta en un periodo que empieza con el curso.
+    const periodEvents=events.filter(e=>e.date?inPeriod(e.date):from<=school.start);
+    const sum=(list,kind)=>list.filter(e=>e.kind===kind);
+    const breakdown=Object.keys(FOLLOW_KINDS).map(kind=>({kind,label:FOLLOW_KINDS[kind],count:sum(periodEvents,kind).length,effect:sum(periodEvents,kind).reduce((n,e)=>n+e.effect,0),total:sum(events,kind).length,totalEffect:sum(events,kind).reduce((n,e)=>n+e.effect,0)}));
+    // Ritmo: pérdida neta de margen por clase transcurrida, proyectada sobre las clases que quedan hasta el límite.
+    const elapsed=today?p.days.filter(d=>d<=today&&d<=p.limit).length:0,remaining=today?p.days.filter(d=>d>today&&d<=p.limit).length:0;
+    const pastLoss=-events.filter(e=>e.date&&today&&e.date<=today).reduce((n,e)=>n+e.effect,0);
+    const projection=elapsed>=8&&remaining>0&&pastLoss>0?{elapsed,remaining,loss:pastLoss,expectedLoss:Math.round(pastLoss*remaining/elapsed)}:null;
+    if(projection)projection.margin=margin-projection.expectedLoss;
+    const unplaced=p.sessions.filter(s=>s.unplaced).length;
+    const status=margin<0||unplaced?'behind':projection&&projection.margin<0?'risk':'ok';
+    // Sesiones del periodo: las que tienen clase entre «from» y «to»; impartidas según su estado.
+    const touched=s=>s.dates.some(d=>d>=from&&d<=to);
+    const periodSessions=p.sessions.filter(touched);
+    const period={from,to,planned:periodSessions.length,done:periodSessions.filter(s=>s.status==='done').length,partial:periodSessions.filter(s=>s.status==='partial').length,
+      pending:periodSessions.filter(s=>!s.status&&today&&s.dates[0]<today).length,dropped:sum(periodEvents,'dropped').length,
+      lost:sum(periodEvents,'lost').length,doubles:sum(periodEvents,'double').length,effect:periodEvents.reduce((n,e)=>n+e.effect,0)};
+    const blocks=(c.sdas||[]).map((sd,index)=>{
+      const list=p.sessions.filter(s=>s.blockId===sd.id),n=k=>list.filter(s=>s.status===k).length,dates=list.flatMap(s=>s.dates).sort();
+      const finished=list.length>0&&list.every(s=>s.status),started=list.some(s=>s.status);
+      return {id:sd.id,index,title:sd.title,sessions:list.length,done:n('done'),partial:n('partial'),dropped:n('dropped'),
+        pending:list.filter(s=>!s.status&&today&&s.dates.length&&s.dates[0]<today).length,left:list.filter(s=>!s.status).length,
+        start:dates[0]||'',end:dates.at(-1)||'',state:finished?'done':started?'progress':'todo',beyondLimit:list.some(s=>s.beyondLimit),
+        inPeriod:list.some(touched)||periodEvents.some(e=>e.blockId===sd.id)};
+    });
+    const notes=p.sessions.filter(s=>s.note&&(s.dates.length?s.dates.some(inPeriod):inPeriod(stampDay(cal.tracking[s.sessionId]?.updatedAt))))
+      .map(s=>({sessionId:s.sessionId,blockId:s.blockId,num:s.num,title:s.title,status:s.status,date:s.dates[0]||'',note:s.note}));
+    const missingNotes=periodEvents.filter(e=>(e.kind==='partial'||e.kind==='dropped')&&!e.reason);
+    const missingReasons=periodEvents.filter(e=>e.kind==='lost'&&!e.reason);
+    const reasons=new Map();for(const e of sum(periodEvents,'lost')){const key=(e.reason||'sin motivo indicado').trim(),k=key.toLowerCase();if(!reasons.has(k))reasons.set(k,{reason:key,count:0,dates:[]});const r=reasons.get(k);r.count++;r.dates.push(e.date)}
+    const sessionsDone=p.sessions.filter(s=>s.status==='done'||s.status==='partial').length,sessionsPlanned=p.sessions.filter(s=>s.status!=='dropped').length;
+    return {today,from,to,limit:p.limit,end:cal.end,reserveDays:cal.reserveDays,lastDate:p.lastDate,status,unplaced,
+      initialMargin,margin,capacity:p.capacity,needed:p.needed,baseCapacity,total,sessionsDone,sessionsPlanned,
+      pendingTotal:p.pending.length,projection,events,periodEvents,breakdown,period,blocks,notes,missingNotes,missingReasons,lostReasons:[...reasons.values()]};
+  }
+  // Texto local (sin IA) para el acta. Lo puede revisar el docente antes de copiarlo.
+  function followUpText(r,{subject='',blockName=b=>b.title,sessionName=e=>'S'+e.num}={}){
+    if(!r)return '';
+    const plural=(n,one,many)=>`${n} ${n===1?one:many}`,out=[];
+    out.push(`Seguimiento de la programación${subject?' de '+subject:''} (periodo del ${shortDate(r.from)} al ${shortDate(r.to)}).`);
+    const ref=`La referencia es impartir todas las sesiones antes del ${shortDate(r.limit)} (último día de clase, ${shortDate(r.end)}, menos ${plural(r.reserveDays,'día','días')} de margen para exámenes y recuperaciones).`;
+    if(r.status==='behind')out.push(`No se sigue la programación: con el calendario actual faltan ${plural(Math.max(1,-r.margin),'clase','clases')} para impartir todas las sesiones previstas. ${ref}`);
+    else if(r.status==='risk')out.push(`Se sigue la programación, con riesgo: quedan ${plural(r.margin,'clase','clases')} de margen, pero si se mantiene el ritmo de pérdida observado (${plural(r.projection.loss,'clase','clases')} en ${r.projection.elapsed} clases) el margen se agotaría antes del límite. ${ref}`);
+    else out.push(`Se sigue la programación: la última sesión está prevista el ${shortDate(r.lastDate)} y quedan ${plural(r.margin,'clase','clases')} de margen. ${ref}`);
+    const q=r.period;
+    out.push(`En el periodo se han impartido ${plural(q.done+q.partial,'sesión','sesiones')}${q.partial?` (${q.partial} de ellas ${q.partial===1?'ha necesitado':'han necesitado'} una clase más de lo previsto)`:''}${q.dropped?` y se ${q.dropped===1?'ha suprimido':'han suprimido'} ${plural(q.dropped,'sesión','sesiones')}`:''}. En conjunto, se han impartido ${r.sessionsDone} de ${r.sessionsPlanned} sesiones de la programación.`);
+    const inc=[];
+    if(q.lost)inc.push(`se ${q.lost===1?'ha perdido':'han perdido'} ${plural(q.lost,'clase','clases')} (${r.lostReasons.map(x=>x.reason+(x.count>1?' ×'+x.count:'')).join('; ')})`);
+    if(q.doubles)inc.push(`se ${q.doubles===1?'ha recuperado':'han recuperado'} ${plural(q.doubles,'clase','clases')} con dos sesiones el mismo día`);
+    const ext=r.periodEvents.filter(e=>e.kind==='partial'||e.kind==='dropped');
+    if(inc.length)out.push('Incidencias del calendario: '+inc.join('; ')+'.');
+    if(ext.length)out.push('Ajustes en las sesiones: '+ext.map(e=>`${e.kind==='partial'?'se amplió':'se suprimió'} ${sessionName(e)}${e.reason?' ('+e.reason.replace(/\s+/g,' ').replace(/[.\s]+$/,'')+')':' (sin motivo anotado)'}`).join('; ')+'.');
+    if(!inc.length&&!ext.length)out.push('No se han registrado incidencias en el periodo.');
+    out.push(`Variación del margen en el periodo: ${q.effect>0?'+':''}${q.effect} (margen inicial ${r.initialMargin>0?'+':''}${r.initialMargin}; margen actual ${r.margin>0?'+':''}${r.margin}).`);
+    const active=r.blocks.filter(b=>b.inPeriod);
+    if(active.length)out.push('Estado por situación de aprendizaje: '+active.map(b=>`${blockName(b)}: ${b.state==='done'?'finalizada':b.state==='progress'?`en curso (${b.done+b.partial} de ${b.sessions-b.dropped} sesiones)`:'sin empezar'}`).join('; ')+'.');
+    if(r.pendingTotal)out.push(`Nota: hay ${plural(r.pendingTotal,'sesión pasada','sesiones pasadas')} sin confirmar en el calendario; los datos pueden estar incompletos.`);
+    return out.join('\n\n');
+  }
+  // Datos para pegar en una IA: solo programación y notas del docente; nunca alumnado.
+  function followUpForAi(r,{subject='',group='',blockName=b=>b.title,sessionName=e=>'S'+e.num}={}){
+    if(!r)return '';
+    const data={materia:subject,grupo:group,periodo:{desde:r.from,hasta:r.to},referencia:{descripcion:'Impartir todas las sesiones antes del límite',limite:r.limit,ultimoDiaDeClase:r.end,diasDeMargenFinal:r.reserveDays},
+      situacion:{estado:{ok:'se sigue la programación',risk:'se sigue, con riesgo de no llegar',behind:'no se llega con el calendario actual'}[r.status],margenInicial:r.initialMargin,margenActual:r.margin,variacionEnElPeriodo:r.period.effect,
+        finPrevistoDeLasSesiones:r.lastDate,sesionesImpartidas:r.sessionsDone,sesionesTotales:r.sessionsPlanned,sesionesPasadasSinConfirmar:r.pendingTotal,
+        ...(r.projection?{proyeccion:{clasesPerdidasHastaHoy:r.projection.loss,clasesTranscurridas:r.projection.elapsed,clasesRestantes:r.projection.remaining,margenFinalEstimado:r.projection.margin,aviso:'estimación lineal, no un dato'}}:{})},
+      periodoResumen:{sesionesImpartidas:r.period.done+r.period.partial,sesionesParciales:r.period.partial,sesionesSuprimidas:r.period.dropped,clasesPerdidas:r.period.lost,diasConDosSesiones:r.period.doubles},
+      incidencias:r.periodEvents.map(e=>({fecha:e.date||null,tipo:FOLLOW_KINDS[e.kind],efectoEnMargen:e.effect,...(e.sessionId?{sesion:sessionName(e)}:{}),motivo:e.reason||null})),
+      situacionesDeAprendizaje:r.blocks.filter(b=>b.inPeriod).map(b=>({nombre:blockName(b),estado:{done:'finalizada',progress:'en curso',todo:'sin empezar'}[b.state],sesiones:b.sessions,impartidas:b.done+b.partial,parciales:b.partial,suprimidas:b.dropped,inicio:b.start||null,finPrevisto:b.end||null})),
+      notasDelDocente:r.notes.map(n=>({sesion:sessionName(n),fecha:n.date||null,nota:n.note}))};
+    return `Redacta el apartado «Seguimiento de la programación» para el acta de una reunión de departamento a partir de los datos JSON que siguen.
+Reglas:
+- Usa exclusivamente estos datos; no inventes causas, fechas ni medidas.
+- Estilo de acta: formal, impersonal, en tercera persona, uno o dos párrafos breves.
+- Indica primero si se sigue la programación (la referencia es impartir todas las sesiones antes del límite; no hay fechas cerradas por sesión).
+- Después, explica las desviaciones del periodo y sus motivos (incidencias y notas del docente) y su efecto en el margen.
+- Si una nota del docente indica una medida o un ajuste, menciónalo como medida adoptada.
+- Si la proyección existe, preséntala como estimación. Si hay sesiones sin confirmar, indica que los datos pueden estar incompletos.
+- No incluyas nombres de alumnado aunque aparezcan en las notas.
+Datos:
+${JSON.stringify(data,null,1)}`;
+  }
   function parseSchool(text){
     let data;try{data=JSON.parse(text)}catch{fail('el archivo no es un JSON válido')}
     check(object(data)&&data.format==='cuaderno-calendario-escolar'&&data.version===1,'formato no reconocido (se espera «cuaderno-calendario-escolar», versión 1)');
@@ -956,7 +1068,7 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     validateSchool(school);school.nonTeaching.sort((a,b)=>a.date.localeCompare(b.date));return school;
   }
   function exportSchool(s){return {format:'cuaderno-calendario-escolar',version:1,...(s.name?{name:s.name}:{}),start:s.start,end:s.end,nonTeaching:s.nonTeaching}}
-  return {TERM_MODES,FINAL_MODES,validateEvaluations,proposeBlocks,KINDS,STATUSES,STATUS_LABELS,WEEKDAYS,normalizeYear,yearOfDate,validateSchools,iso,addDays,weekday,validateSchool,validateCourse,blank,hasSessions,sessions,teachingDays,plan,storedDate,fixedDate,prune,parseSchool,exportSchool};
+  return {FOLLOW_KINDS,followUp,followUpText,followUpForAi,TERM_MODES,FINAL_MODES,validateEvaluations,proposeBlocks,KINDS,STATUSES,STATUS_LABELS,WEEKDAYS,normalizeYear,yearOfDate,validateSchools,iso,addDays,weekday,validateSchool,validateCourse,blank,hasSessions,sessions,teachingDays,plan,storedDate,fixedDate,prune,parseSchool,exportSchool};
 });
 
 </script>
@@ -1105,6 +1217,57 @@ function calendarMoveHere(c,p,day){
  if(!options)return '';
  return `<details class="calendar-move-here"><summary>Poner otra sesión en este día (fecha fija)</summary><p class="tiny muted">La sesión elegida se queda en este día, fuera del orden de la programación (útil para salidas, concursos o actividades sueltas). Las demás sesiones se reorganizan alrededor. Es la misma fecha que puedes escribir en Estructura.</p><div class="toolbar"><select id="calendarMoveSelect">${options}</select><button class="btn primary" onclick="const v=document.getElementById('calendarMoveSelect').value;closeModal();calendarSetFixed(v,${jsArg(day)})">Poner en este día</button></div></details>`;
 }
+/* Seguimiento de la programación: solo consulta. Los datos salen del calendario (estados, notas y días sin clase). */
+const FOLLOWUP_PERIODS=new Map(); // periodo elegido por materia; no se guarda en los datos
+function followUpPeriod(c,school,today){
+ const saved=FOLLOWUP_PERIODS.get(c.id);if(saved)return saved;
+ return {from:school.start,to:today<school.start?school.start:today>school.end?school.end:today};
+}
+function followUpPresets(c,school,today){
+ const list=[['Curso completo hasta hoy',school.start,today]],prev=d=>CalendarModel.addDays(d,1);
+ const back=CalendarModel.addDays(today,-30);list.push(['Últimos 30 días',back<school.start?school.start:back,today]);
+ let start=school.start;for(const t of c.evaluations?.terms||[]){if(!t.end)continue;if(t.end>=school.start&&start<=school.end)list.push([t.label,start,t.end<today?t.end:today]);start=prev(t.end)}
+ return list.filter(([,a,b])=>a<=b);
+}
+function followUpNames(c){return {subject:[c.name,c.group].filter(Boolean).join(' · '),group:c.group||c.level||'',blockName:b=>calendarBlockName(c,b.id),sessionName:e=>calendarSessionName(c,{blockId:e.blockId,block:'',num:e.num,title:e.title})}}
+function followUpReport(c=course()){const school=calendarSchool(c),today=calendarToday();if(!school||!c.calendar||!CalendarModel.hasSessions(c))return null;const q=followUpPeriod(c,school,today);return CalendarModel.followUp(c,school,{today,from:q.from,to:q.to})}
+function setFollowUpPeriod(from,to){const c=course();if(!CalendarModel.iso(from)||!CalendarModel.iso(to)){alert('Indica las dos fechas del periodo.');return}if(to<from)[from,to]=[to,from];FOLLOWUP_PERIODS.set(c.id,{from,to});render()}
+function applyFollowUpPeriod(){setFollowUpPeriod(document.getElementById('followUpFrom').value,document.getElementById('followUpTo').value)}
+const followUpSigned=n=>(n>0?'+':'')+n;
+function renderFollowUp(c){
+ const title='<h1>Seguimiento de la programación</h1>',school=calendarSchool(c),year=calendarYear(c);
+ const go='<div class="toolbar"><button class="btn primary" onclick="nav(\'Calendario\')">Ir al Calendario</button></div>';
+ if(!year||!CalendarModel.hasSessions(c)||!school||!c.calendar){shell(`${title}<div class="empty">El seguimiento se calcula a partir del Calendario de la programación. Configura antes el calendario del centro y los días de clase de este grupo.${go}</div>`);return}
+ const today=calendarToday(),q=followUpPeriod(c,school,today),r=CalendarModel.followUp(c,school,{today,from:q.from,to:q.to}),names=followUpNames(c);
+ const verdict={ok:['notice','Se sigue la programación',`Todas las sesiones caben antes del límite (${calendarDate(r.limit)}). Última sesión prevista: ${calendarDate(r.lastDate)}.`],
+  risk:['notice warn','Se sigue, con riesgo',`Hoy hay margen, pero al ritmo de pérdida observado (${r.projection?.loss} clases en ${r.projection?.elapsed}) se agotaría antes del límite (${calendarDate(r.limit)}).`],
+  behind:['notice dangerbox','No se llega con el calendario actual',`Faltan ${Math.max(1,-r.margin)} clases para impartir todas las sesiones antes del límite (${calendarDate(r.limit)}).`]}[r.status];
+ const presets=followUpPresets(c,school,today);
+ const evName=e=>e.sessionId?names.sessionName(e):'';
+ const rows=r.periodEvents.map(e=>`<tr class="${e.effect<0?'warn':''}"><td>${e.date?calendarDate(e.date):'—'}</td><td>${esc(CalendarModel.FOLLOW_KINDS[e.kind])}</td><td>${esc(evName(e))||'—'}</td><td>${e.reason?esc(e.reason):e.kind==='double'?'—':`<span class="review-state warn">Sin ${e.kind==='lost'?'motivo':'nota'}</span>${e.sessionId?` <button class="btn small" onclick="openCalendarSession(${jsArg(e.sessionId)})">Añadir nota</button>`:''}`}</td><td class="num">${e.effect?followUpSigned(e.effect):'0'}</td></tr>`).join('');
+ const blocks=r.blocks.map(b=>`<tr class="${b.beyondLimit?'error':''}"><td><b>${esc(names.blockName(b))}</b></td><td>${b.done+b.partial} de ${b.sessions-b.dropped}${b.dropped?` <span class="tiny muted">(${b.dropped} suprimida${b.dropped>1?'s':''})</span>`:''}</td><td>${b.partial||'—'}</td><td>${b.start?calendarDate(b.start)+' → '+calendarDate(b.end):'—'}</td><td><span class="review-state ${b.state==='done'?'':b.beyondLimit?'error':'warn'}">${b.state==='done'?'Finalizada':b.state==='progress'?'En curso':'Sin empezar'}</span></td></tr>`).join('');
+ const notes=r.notes.map(n=>`<li><b>${esc(names.sessionName(n))}</b>${n.date?` · ${calendarDate(n.date)}`:''}<div>${esc(n.note)}</div></li>`).join('');
+ shell(`<section class="follow-up"><div class="section-head">${title}<button class="btn" onclick="nav('Calendario')">Abrir Calendario</button></div>
+ <p class="muted">Referencia: impartir todas las sesiones antes del límite (último día de clase − margen final). No hay fechas cerradas por sesión. Solo consulta: no modifica nada.</p>
+ <div class="card follow-period"><div class="toolbar" role="group" aria-label="Periodo">${presets.map(([label,a,b])=>`<button class="btn small ${a===r.from&&b===r.to?'primary':''}" onclick="setFollowUpPeriod(${jsArg(a)},${jsArg(b)})">${esc(label)}</button>`).join('')}</div>
+ <div class="toolbar"><label>Desde<input type="date" id="followUpFrom" value="${esc(r.from)}"></label><label>Hasta<input type="date" id="followUpTo" value="${esc(r.to)}"></label><button class="btn small" onclick="applyFollowUpPeriod()">Aplicar periodo</button></div></div>
+ <div class="${verdict[0]}"><strong>${verdict[1]}.</strong> ${esc(verdict[2])}</div>
+ ${r.pendingTotal?`<div class="notice warn">Hay ${r.pendingTotal} ${r.pendingTotal===1?'sesión pasada':'sesiones pasadas'} sin confirmar en el Calendario: el seguimiento puede estar incompleto.</div>`:''}
+ <div class="grid metrics follow-metrics">${metric('Margen inicial (sin incidencias)',followUpSigned(r.initialMargin))}${metric('Variación en el periodo',followUpSigned(r.period.effect))}<div class="card metric ${r.margin<0?'is-late':''}"><strong>${followUpSigned(r.margin)}</strong><span>Margen actual</span></div>${metric('Sesiones impartidas',`${r.sessionsDone} / ${r.sessionsPlanned}`)}${r.projection?metric('Margen final estimado',followUpSigned(r.projection.margin),'Estimación al ritmo actual'):''}</div>
+ <h2>Qué ha cambiado el margen</h2>
+ <div class="table-wrap"><table class="follow-breakdown"><thead><tr><th>Concepto</th><th>En el periodo</th><th>Efecto</th><th>En todo el curso</th><th>Efecto</th></tr></thead><tbody>${r.breakdown.map(b=>`<tr><td>${esc(b.label)}</td><td>${b.count}</td><td class="num">${followUpSigned(b.effect)}</td><td>${b.total}</td><td class="num">${followUpSigned(b.totalEffect)}</td></tr>`).join('')}</tbody></table></div>
+ <h2>Incidencias del periodo</h2>${rows?`<div class="table-wrap"><table class="follow-events"><thead><tr><th>Fecha</th><th>Tipo</th><th>Sesión</th><th>Motivo o nota</th><th>Margen</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<p class="muted">No hay incidencias registradas en este periodo.</p>'}
+ <h2>Situaciones de aprendizaje</h2><div class="table-wrap"><table class="follow-blocks"><thead><tr><th>${esc(levelName(c,0))}</th><th>Impartidas</th><th>Parciales</th><th>Fechas</th><th>Estado</th></tr></thead><tbody>${blocks}</tbody></table></div>
+ ${notes?`<details class="card follow-notes"><summary><b>Notas de revisión del periodo</b> <span class="muted">· ${r.notes.length}</span></summary><ul>${notes}</ul></details>`:''}
+ <h2>Texto para el acta</h2><p class="muted">Generado en la app, sin IA. Puedes retocarlo antes de copiarlo; los cambios no se guardan.</p>
+ <textarea id="followUpText" rows="12" aria-label="Texto para el acta">${esc(CalendarModel.followUpText(r,names))}</textarea>
+ <div class="toolbar"><button class="btn primary" onclick="copyFollowUpText()">Copiar texto</button><button class="btn" onclick="copyFollowUpForAi()">${uiIcon('json')} Copiar datos para IA</button></div>
+ <p class="tiny muted">«Copiar datos para IA» copia unas instrucciones y los datos del seguimiento (sin alumnado) para que una IA redacte el acta. La app no envía nada. Revisa que tus notas no contengan nombres de alumnos.</p>
+ <div id="followUpStatus" role="status" aria-live="polite"></div></section>`);
+}
+async function followUpCopy(text,message){const el=document.getElementById('followUpStatus');try{await navigator.clipboard.writeText(text);if(el)el.textContent=message;return {ok:true}}catch(e){if(el)el.textContent='No se ha podido copiar: '+e.message;return {ok:false,error:e.message}}}
+function copyFollowUpText(){return followUpCopy(document.getElementById('followUpText').value,'Texto copiado.')}
+function copyFollowUpForAi(){const c=course();return followUpCopy(CalendarModel.followUpForAi(followUpReport(c),followUpNames(c)),'Datos copiados. Pégalos en la IA que elijas; la app no envía datos.')}
 
 </script>
 <script>/* individual-ui.js */
@@ -2469,8 +2632,8 @@ function openQuickGuide(){
  <h3>Copias de seguridad</h3><p>Guardar copia completa exporta todos los cursos y sus datos. Restaurar copia completa recupera ese archivo y reemplaza el contenido actual: revisa qué copia eliges. Exportar materia, en Copias, guarda solo el curso abierto. Guarda copias periódicas fuera de la aplicación.</p>
  <div class="toolbar"><button class="btn" onclick="closeModal()">Cerrar</button></div>`);
 }
-const NAV_GROUPS=[['dia','Día a día',['Evaluar','Apuntes de sesión','Calendario','Cuaderno']],['seguimiento','Seguimiento',['Criterios','Observaciones','Cierre']],['preparar','Preparar el curso',['Estructura','Revisión','Alumnado','Recuperaciones']]];
-const NAV_ICONS={Inicio:'home',Evaluar:'check','Apuntes de sesión':'clip',Calendario:'calendar',Cuaderno:'grid',Criterios:'target',Observaciones:'ucheck',Estructura:'prog','Revisión':'search',Cierre:'flag',Alumnado:'people',Recuperaciones:'repeat',Copias:'file'};
+const NAV_GROUPS=[['dia','Día a día',['Evaluar','Apuntes de sesión','Calendario','Cuaderno']],['seguimiento','Seguimiento',['Criterios','Observaciones','Seguimiento de la programación','Cierre']],['preparar','Preparar el curso',['Estructura','Revisión','Alumnado','Recuperaciones']]];
+const NAV_ICONS={Inicio:'home',Evaluar:'check','Apuntes de sesión':'clip',Calendario:'calendar',Cuaderno:'grid',Criterios:'target',Observaciones:'ucheck',Estructura:'prog','Revisión':'search',Cierre:'flag','Seguimiento de la programación':'bars',Alumnado:'people',Recuperaciones:'repeat',Copias:'file'};
 const SIDE_GROUPS_KEY='cuaderno.ui.gruposMenu';
 // Preferencia visual por equipo; nunca forma parte de los datos académicos.
 const SIDE_OPEN=(()=>{try{const v=JSON.parse(localStorage.getItem(SIDE_GROUPS_KEY)||'null');if(Array.isArray(v))return new Set(v.filter(k=>NAV_GROUPS.some(g=>g[0]===k)))}catch{}return new Set(['dia'])})();
@@ -3269,7 +3432,7 @@ function render(){
  if(!APP.selectedCourseId){renderHome();return}
  const c=course();if(!c){APP.selectedCourseId=null;renderHome();return}
  switch(c.ui.page){
-   case'Evaluar':renderEvaluar(c);break;case'Cuaderno':renderCuaderno(c);break;case'Criterios':renderCriterios(c);break;case'Alumnado':renderAlumnado(c);break;case'Observaciones':renderObservaciones(c);break;case'Apuntes de sesión':renderSessionNotes(c);break;case'Estructura':renderEstructura(c);break;case'Recuperaciones':renderRecuperaciones(c);break;case'Revisión':renderRevision(c);break;case'Cierre':renderCierre(c);break;case'Calendario':renderCalendario(c);break;case'Copias':renderCopias(c);break;default:renderInicio(c)
+   case'Evaluar':renderEvaluar(c);break;case'Cuaderno':renderCuaderno(c);break;case'Criterios':renderCriterios(c);break;case'Alumnado':renderAlumnado(c);break;case'Observaciones':renderObservaciones(c);break;case'Apuntes de sesión':renderSessionNotes(c);break;case'Estructura':renderEstructura(c);break;case'Recuperaciones':renderRecuperaciones(c);break;case'Revisión':renderRevision(c);break;case'Cierre':renderCierre(c);break;case'Calendario':renderCalendario(c);break;case'Seguimiento de la programación':renderFollowUp(c);break;case'Copias':renderCopias(c);break;default:renderInicio(c)
  }
 }
 document.getElementById('modal').addEventListener('click',e=>{if(e.target.id==='modal')cancelConfirm()});
@@ -3741,6 +3904,12 @@ const PAGES = {
       'Elige el periodo del historial (curso completo o una evaluación).',
       `Añade observaciones con ${T('Añadir observación')}.`],
     note: ['El periodo solo filtra el historial; no cambia la nota de evaluación.', 'Las anotaciones de «Apuntes de sesión» aparecen aquí automáticamente.', `${T('Configurar periodos')} define los tramos (por ejemplo, cada evaluación).`] },
+  'Seguimiento de la programación': { title: 'Seguimiento de la programación', what: 'Te dice si estás siguiendo tu programación y por qué no, a partir de lo que anotas en el Calendario. Pensado para las actas de departamento. Solo consulta.', steps: [
+      'Elige el periodo (por ejemplo, desde la última reunión de departamento) con los botones o con las fechas «Desde» y «Hasta».',
+      'Mira el veredicto: la referencia es impartir todas las sesiones antes del límite (último día de clase menos el margen final). No hay fechas cerradas por sesión.',
+      '«Qué ha cambiado el margen» explica cada clase ganada o perdida: clases sin clase, días con dos sesiones, sesiones parciales y suprimidas, con su motivo o nota.',
+      `Copia el texto ya redactado con ${T('Copiar texto')}, o usa ${T('Copiar datos para IA')} y pégalo en la IA que elijas para que redacte el acta.`],
+    note: ['El motivo de una clase perdida es el que escribes al marcar «No hubo clase». El de una sesión parcial o suprimida es su «Nota para la revisión del próximo curso»: si falta, aparece «Sin nota» con un botón para añadirla.', 'Los datos para IA no incluyen alumnado, pero revisa que tus notas no contengan nombres de alumnos.', 'Si hay sesiones pasadas sin confirmar en el Calendario, el seguimiento puede estar incompleto.'] },
   Cierre: { title: 'Cierre de evaluación', what: 'Prepara la sesión de evaluación o el boletín: nota de la evaluación actual de cada alumno con sus comentarios y faltas. Solo consulta.', steps: [
       'Revisa la nota y los comentarios de cada alumno.',
       `${T('Exportar cierre a Excel (.xlsx)')} si quieres llevarlo a la sesión de evaluación.`,

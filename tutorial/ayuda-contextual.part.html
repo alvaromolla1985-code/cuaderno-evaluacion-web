@@ -83,6 +83,12 @@ const PAGES = {
       'Elige el periodo del historial (curso completo o una evaluación).',
       `Añade observaciones con ${T('Añadir observación')}.`],
     note: ['El periodo solo filtra el historial; no cambia la nota de evaluación.', 'Las anotaciones de «Apuntes de sesión» aparecen aquí automáticamente.', `${T('Configurar periodos')} define los tramos (por ejemplo, cada evaluación).`] },
+  'Seguimiento de la programación': { title: 'Seguimiento de la programación', what: 'Te dice si estás siguiendo tu programación y por qué no, a partir de lo que anotas en el Calendario. Pensado para las actas de departamento. Solo consulta.', steps: [
+      'Elige el periodo (por ejemplo, desde la última reunión de departamento) con los botones o con las fechas «Desde» y «Hasta».',
+      'Mira el veredicto: la referencia es impartir todas las sesiones antes del límite (último día de clase menos el margen final). No hay fechas cerradas por sesión.',
+      '«Qué ha cambiado el margen» explica cada clase ganada o perdida: clases sin clase, días con dos sesiones, sesiones parciales y suprimidas, con su motivo o nota.',
+      `Copia el texto ya redactado con ${T('Copiar texto')}, o usa ${T('Copiar datos para IA')} y pégalo en la IA que elijas para que redacte el acta.`],
+    note: ['El motivo de una clase perdida es el que escribes al marcar «No hubo clase». El de una sesión parcial o suprimida es su «Nota para la revisión del próximo curso»: si falta, aparece «Sin nota» con un botón para añadirla.', 'Los datos para IA no incluyen alumnado, pero revisa que tus notas no contengan nombres de alumnos.', 'Si hay sesiones pasadas sin confirmar en el Calendario, el seguimiento puede estar incompleto.'] },
   Cierre: { title: 'Cierre de evaluación', what: 'Prepara la sesión de evaluación o el boletín: nota de la evaluación actual de cada alumno con sus comentarios y faltas. Solo consulta.', steps: [
       'Revisa la nota y los comentarios de cada alumno.',
       `${T('Exportar cierre a Excel (.xlsx)')} si quieres llevarlo a la sesión de evaluación.`,
