@@ -66,8 +66,8 @@ const PAGES = {
       `<b>Calendario del centro</b> (una sola vez por curso escolar, sirve para todas tus materias): ${T('Introducir calendario del centro')} → ${T('Formato para IA')} → pégalo en una IA y adjunta el calendario oficial (PDF o imagen) → pega aquí el JSON que te devuelva → ${P('Validar y guardar')}.`,
       `<b>Configurar grupo</b>: marca los días de la semana con clase, el último día de clase y los días de margen al final (exámenes, recuperaciones).`,
       'La app coloca cada sesión en una fecha y te avisa de si terminarás a tiempo.',
-      'Cuando pasen las clases, confirma qué se hizo: hecha, «No hubo clase» o «Parcial».'],
-    note: ['«No hubo clase» retrasa una clase todas las sesiones siguientes. «Parcial» hace que esa sesión continúe en la clase siguiente.', 'Las notas de seguimiento te sirven para revisar la programación el curso que viene.'] },
+      'Cuando pasen las clases, confirma qué se hizo: hecha, «Parcial», «No hubo clase» o «Clase dedicada a otra actividad» (hubo clase, pero se dedicó a corregir, repasar o a un imprevisto).'],
+    note: ['«No hubo clase» y «Clase dedicada a otra actividad» retrasan una clase todas las sesiones siguientes; el seguimiento las cuenta por separado. Escribe en Motivo qué pasó. «Parcial» hace que esa sesión continúe en la clase siguiente.', 'Las notas de seguimiento te sirven para revisar la programación el curso que viene.'] },
   Cuaderno: { title: 'Cuaderno', what: 'Vista de tabla, como el Excel de siempre: todas las notas del grupo por actividad.', steps: [
       'Elige el bloque (unidad/SDA) que quieres ver.',
       'Pulsa una celda para ir a evaluar a ese alumno en esa actividad.'],
@@ -86,9 +86,9 @@ const PAGES = {
   'Seguimiento de la programación': { title: 'Seguimiento de la programación', what: 'Te dice si estás siguiendo tu programación y por qué no, a partir de lo que anotas en el Calendario. Pensado para las actas de departamento. Solo consulta.', steps: [
       'Elige el periodo (por ejemplo, desde la última reunión de departamento) con los botones o con las fechas «Desde» y «Hasta».',
       'Mira el veredicto: la referencia es impartir todas las sesiones antes del límite (último día de clase menos el margen final). No hay fechas cerradas por sesión.',
-      '«Qué ha cambiado el margen» explica cada clase ganada o perdida: clases sin clase, días con dos sesiones, sesiones parciales y suprimidas, con su motivo o nota.',
+      '«Qué ha cambiado el margen» explica cada clase ganada o perdida: clases perdidas, clases dedicadas a otra actividad, días con dos sesiones, sesiones parciales y suprimidas, con su motivo o nota.',
       `Copia el texto ya redactado con ${T('Copiar texto')}, o usa ${T('Copiar datos para IA')} y pégalo en la IA que elijas para que redacte el acta.`],
-    note: ['El motivo de una clase perdida es el que escribes al marcar «No hubo clase». El de una sesión parcial o suprimida es su «Nota para la revisión del próximo curso»: si falta, aparece «Sin nota» con un botón para añadirla.', 'Los datos para IA no incluyen alumnado, pero revisa que tus notas no contengan nombres de alumnos.', 'Si hay sesiones pasadas sin confirmar en el Calendario, el seguimiento puede estar incompleto.'] },
+    note: ['El motivo de una clase perdida o dedicada a otra actividad es el que escribes en Motivo al marcar el día. El de una sesión parcial o suprimida es su «Nota para la revisión del próximo curso»: si falta, aparece «Sin nota» con un botón para añadirla.', 'Los datos para IA no incluyen alumnado, pero revisa que tus notas no contengan nombres de alumnos.', 'Si hay sesiones pasadas sin confirmar en el Calendario, el seguimiento puede estar incompleto.'] },
   Cierre: { title: 'Cierre de evaluación', what: 'Prepara la sesión de evaluación o el boletín: nota de la evaluación actual de cada alumno con sus comentarios y faltas. Solo consulta.', steps: [
       'Revisa la nota y los comentarios de cada alumno.',
       `${T('Exportar cierre a Excel (.xlsx)')} si quieres llevarlo a la sesión de evaluación.`,

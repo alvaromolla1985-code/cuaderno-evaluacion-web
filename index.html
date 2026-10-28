@@ -197,7 +197,7 @@ table{border-collapse:separate;border-spacing:0;width:100%} th,td{padding:8px;bo
 .cal-day{position:relative;display:grid;place-items:center;height:26px;margin:0;box-shadow:none;border-radius:6px;font:inherit;font-size:11px;border:1px solid transparent;background:transparent;color:#a0aabb;padding:0}
 button.cal-day{cursor:pointer;color:#1f3557}button.cal-day:focus-visible{outline:3px solid #1765e9;outline-offset:1px}.cal-day sup{position:absolute;top:-2px;right:1px;font-size:8px;font-weight:800}
 .cal-day.planned,.cal-dot.planned{background:#dbe8fb;border-color:#9cbdf0}.cal-day.done,.cal-dot.done{background:#d1f2dd;border-color:#7cc99a}.cal-day.partial,.cal-dot.partial{background:#fff0c7;border-color:#e2b44a}
-.cal-day.pending,.cal-dot.pending{background:#fff;border:2px solid #e08a1e}.cal-day.lost,.cal-dot.lost{background:repeating-linear-gradient(135deg,#eef1f5 0 4px,#d9dee6 4px 6px);border-color:#c3cad5;color:#6b778a}
+.cal-day.pending,.cal-dot.pending{background:#fff;border:2px solid #e08a1e}.cal-day.lost,.cal-dot.lost{background:repeating-linear-gradient(135deg,#eef1f5 0 4px,#d9dee6 4px 6px);border-color:#c3cad5;color:#6b778a}.cal-day.other,.cal-dot.other{background:repeating-linear-gradient(135deg,#f3eefb 0 4px,#ddd0f2 4px 6px);border-color:#b9a3e0;color:#5b4a85}
 .cal-day.free,.cal-dot.free{background:#f6f8fb;border-color:#e3e8ef}.cal-day.reserve,.cal-dot.reserve{background:#fdf2e9;border-color:#f2c9a5}.cal-day.closed,.cal-dot.closed{background:#fde8e8;border-color:#f4b8b8;color:#b42318}
 .cal-dot.dropped{background:#fff;border-color:#c3cad5}.cal-day.beyond{box-shadow:inset 0 0 0 2px #d92d20}.cal-day.today{outline:2px solid #13203f;outline-offset:1px;font-weight:800}
 .calendar-session{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}.calendar-session h3{margin:0}
@@ -814,6 +814,8 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
 })(typeof globalThis==='object'?globalThis:this,function(){
   'use strict';
   const KINDS=['festivo','local','centro'],STATUSES=['done','partial','dropped'];
+  // Días que no avanzan la programación. Sin «kind» = no hubo clase (datos anteriores); «other» = la clase se dedicó a otra actividad.
+  const NO_SESSION_KINDS=['other'];
   const STATUS_LABELS={done:'Hecha',partial:'Parcial (continúa en la clase siguiente)',dropped:'Suprimida'};
   const WEEKDAYS=['','Lunes','Martes','Miércoles','Jueves','Viernes'];
   const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
@@ -859,7 +861,7 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     check(iso(cal.end),'fin de clases del grupo inválido');
     check(Number.isInteger(cal.reserveDays)&&cal.reserveDays>=0&&cal.reserveDays<=90,'margen final inválido');
     const dated=(list,name,extra=()=>true)=>{check(Array.isArray(list)&&list.length<=400,name+' inválidos');const seen=new Set();list.forEach(x=>{check(object(x)&&iso(x.date)&&extra(x),name+' inválidos');check(!seen.has(x.date),name+' repetidos: '+x.date);seen.add(x.date)})};
-    dated(cal.noSession,'días sin sesión',x=>x.reason===undefined||typeof x.reason==='string'&&x.reason.length<=200);
+    dated(cal.noSession,'días sin sesión',x=>(x.reason===undefined||typeof x.reason==='string'&&x.reason.length<=200)&&(x.kind===undefined||NO_SESSION_KINDS.includes(x.kind)));
     dated(cal.doubles,'días con dos sesiones');
     check(Array.isArray(cal.anchors)&&cal.anchors.length<=400,'sesiones fijadas inválidas');
     const anchored=new Set();cal.anchors.forEach(a=>{check(object(a)&&typeof a.sessionId==='string'&&a.sessionId&&iso(a.date)&&!anchored.has(a.sessionId),'sesión fijada inválida');anchored.add(a.sessionId)});
@@ -910,7 +912,7 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
   function fixedDate(se,school){const d=storedDate(se.date);return d&&d>=school.start&&d<=school.end?d:''}
   function plan(c,school,today=''){
     const cal=c.calendar;if(!school||!cal||!hasSessions(c))return null;
-    const days=teachingDays(school,cal),limit=addDays(cal.end,-cal.reserveDays),lost=new Map(cal.noSession.map(x=>[x.date,x.reason||''])),doubles=new Set(cal.doubles.map(x=>x.date));
+    const days=teachingDays(school,cal),limit=addDays(cal.end,-cal.reserveDays),lost=new Map(cal.noSession.map(x=>[x.date,{reason:x.reason||'',kind:x.kind==='other'?'other':'lost'}])),doubles=new Set(cal.doubles.map(x=>x.date));
     const slots=[];for(const d of days){if(lost.has(d))continue;slots.push(d);if(doubles.has(d))slots.push(d)}
     const taken=slots.map(()=>false),anchors=new Map(cal.anchors.map(a=>[a.sessionId,a.date])),list=sessions(c),placed=[],conflicts=[],fixedDates=new Map();
     const needOf=se=>{const t=cal.tracking[se.id]||{};return t.status==='dropped'?0:t.status==='partial'?2:1};
@@ -943,7 +945,7 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     // Sesión actual: la de fecha más reciente hasta hoy (las de fecha fija pueden ir fuera de orden).
     let current=null,currentDate='';
     if(today)for(const s of placed)for(const d of s.dates)if(d<=today&&d>=currentDate){currentDate=d;current=s}
-    return {days,slots,limit,lost:[...lost].map(([date,reason])=>({date,reason})),doubles:[...doubles],sessions:placed,conflicts,capacity,needed,margin:capacity-needed,lastDate,
+    return {days,slots,limit,lost:[...lost].map(([date,x])=>({date,reason:x.reason,kind:x.kind})),doubles:[...doubles],sessions:placed,conflicts,capacity,needed,margin:capacity-needed,lastDate,
       late:!!lastDate&&lastDate>limit||placed.some(s=>s.unplaced),pending,current,free:slots.filter(d=>d<=limit).length-placed.filter(s=>s.dates.length).reduce((n,s)=>n+s.dates.filter(d=>d<=limit).length,0)};
   }
   function prune(c){
@@ -956,9 +958,9 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
      Referencia: impartir todas las sesiones antes del límite (último día de clase − margen final).
      El margen actual se descompone exactamente en:
        margen inicial (todas las clases hasta el límite − todas las sesiones, sin incidencias)
-       − días sin clase (hasta el límite) + días con dos sesiones (hasta el límite)
+       − días sin clase y clases dedicadas a otra actividad (hasta el límite) + días con dos sesiones (hasta el límite)
        − sesiones parciales (ocupan una clase más) + sesiones suprimidas (liberan una clase). */
-  const FOLLOW_KINDS={lost:'Clase perdida',double:'Dos sesiones el mismo día',partial:'Sesión parcial',dropped:'Sesión suprimida'};
+  const FOLLOW_KINDS={lost:'Clase perdida',other:'Clase dedicada a otra actividad',double:'Dos sesiones el mismo día',partial:'Sesión parcial',dropped:'Sesión suprimida'};
   const shortDate=day=>day?day.slice(8,10)+'/'+day.slice(5,7)+'/'+day.slice(0,4):'—';
   const stampDay=v=>typeof v==='string'?iso(v.slice(0,10)):'';
   function followUp(c,school,{today='',from='',to=''}={}){
@@ -968,7 +970,7 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     const inPeriod=d=>!!d&&d>=from&&d<=to;
     const baseCapacity=p.days.filter(d=>d<=p.limit).length,total=p.sessions.length,initialMargin=baseCapacity-total;
     const events=[];
-    for(const x of p.lost)if(teaching.has(x.date))events.push({kind:'lost',date:x.date,effect:x.date<=p.limit?-1:0,reason:x.reason||''});
+    for(const x of p.lost)if(teaching.has(x.date))events.push({kind:x.kind,date:x.date,effect:x.date<=p.limit?-1:0,reason:x.reason||''});
     for(const d of p.doubles)if(teaching.has(d)&&!lostSet.has(d))events.push({kind:'double',date:d,effect:d<=p.limit?1:0,reason:''});
     for(const s of p.sessions){
       if(s.status!=='partial'&&s.status!=='dropped')continue;
@@ -994,7 +996,7 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     const periodSessions=p.sessions.filter(touched);
     const period={from,to,planned:periodSessions.length,done:periodSessions.filter(s=>s.status==='done').length,partial:periodSessions.filter(s=>s.status==='partial').length,
       pending:periodSessions.filter(s=>!s.status&&today&&s.dates[0]<today).length,dropped:sum(periodEvents,'dropped').length,
-      lost:sum(periodEvents,'lost').length,doubles:sum(periodEvents,'double').length,effect:periodEvents.reduce((n,e)=>n+e.effect,0)};
+      lost:sum(periodEvents,'lost').length,other:sum(periodEvents,'other').length,doubles:sum(periodEvents,'double').length,effect:periodEvents.reduce((n,e)=>n+e.effect,0)};
     const blocks=(c.sdas||[]).map((sd,index)=>{
       const list=p.sessions.filter(s=>s.blockId===sd.id),n=k=>list.filter(s=>s.status===k).length,dates=list.flatMap(s=>s.dates).sort();
       const finished=list.length>0&&list.every(s=>s.status),started=list.some(s=>s.status);
@@ -1006,12 +1008,12 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     const notes=p.sessions.filter(s=>s.note&&(s.dates.length?s.dates.some(inPeriod):inPeriod(stampDay(cal.tracking[s.sessionId]?.updatedAt))))
       .map(s=>({sessionId:s.sessionId,blockId:s.blockId,num:s.num,title:s.title,status:s.status,date:s.dates[0]||'',note:s.note}));
     const missingNotes=periodEvents.filter(e=>(e.kind==='partial'||e.kind==='dropped')&&!e.reason);
-    const missingReasons=periodEvents.filter(e=>e.kind==='lost'&&!e.reason);
-    const reasons=new Map();for(const e of sum(periodEvents,'lost')){const key=(e.reason||'sin motivo indicado').trim(),k=key.toLowerCase();if(!reasons.has(k))reasons.set(k,{reason:key,count:0,dates:[]});const r=reasons.get(k);r.count++;r.dates.push(e.date)}
+    const missingReasons=periodEvents.filter(e=>(e.kind==='lost'||e.kind==='other')&&!e.reason);
+    const group=kind=>{const reasons=new Map();for(const e of sum(periodEvents,kind)){const key=(e.reason||'sin motivo indicado').trim(),k=key.toLowerCase();if(!reasons.has(k))reasons.set(k,{reason:key,count:0,dates:[]});const r=reasons.get(k);r.count++;r.dates.push(e.date)}return [...reasons.values()]};
     const sessionsDone=p.sessions.filter(s=>s.status==='done'||s.status==='partial').length,sessionsPlanned=p.sessions.filter(s=>s.status!=='dropped').length;
     return {today,from,to,limit:p.limit,end:cal.end,reserveDays:cal.reserveDays,lastDate:p.lastDate,status,unplaced,
       initialMargin,margin,capacity:p.capacity,needed:p.needed,baseCapacity,total,sessionsDone,sessionsPlanned,
-      pendingTotal:p.pending.length,projection,events,periodEvents,breakdown,period,blocks,notes,missingNotes,missingReasons,lostReasons:[...reasons.values()]};
+      pendingTotal:p.pending.length,projection,events,periodEvents,breakdown,period,blocks,notes,missingNotes,missingReasons,lostReasons:group('lost'),otherReasons:group('other')};
   }
   // Texto local (sin IA) para el acta. Lo puede revisar el docente antes de copiarlo.
   function followUpText(r,{subject='',blockName=b=>b.title,sessionName=e=>'S'+e.num}={}){
@@ -1025,7 +1027,9 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
     const q=r.period;
     out.push(`En el periodo se han impartido ${plural(q.done+q.partial,'sesión','sesiones')}${q.partial?` (${q.partial} de ellas ${q.partial===1?'ha necesitado':'han necesitado'} una clase más de lo previsto)`:''}${q.dropped?` y se ${q.dropped===1?'ha suprimido':'han suprimido'} ${plural(q.dropped,'sesión','sesiones')}`:''}. En conjunto, se han impartido ${r.sessionsDone} de ${r.sessionsPlanned} sesiones de la programación.`);
     const inc=[];
-    if(q.lost)inc.push(`se ${q.lost===1?'ha perdido':'han perdido'} ${plural(q.lost,'clase','clases')} (${r.lostReasons.map(x=>x.reason+(x.count>1?' ×'+x.count:'')).join('; ')})`);
+    const why=list=>list.map(x=>x.reason+(x.count>1?' ×'+x.count:'')).join('; ');
+    if(q.lost)inc.push(`se ${q.lost===1?'ha perdido':'han perdido'} ${plural(q.lost,'clase','clases')} (${why(r.lostReasons)})`);
+    if(q.other)inc.push(`se ${q.other===1?'ha dedicado':'han dedicado'} ${plural(q.other,'clase','clases')} a actividades no previstas en la programación (${why(r.otherReasons)})`);
     if(q.doubles)inc.push(`se ${q.doubles===1?'ha recuperado':'han recuperado'} ${plural(q.doubles,'clase','clases')} con dos sesiones el mismo día`);
     const ext=r.periodEvents.filter(e=>e.kind==='partial'||e.kind==='dropped');
     if(inc.length)out.push('Incidencias del calendario: '+inc.join('; ')+'.');
@@ -1044,7 +1048,7 @@ async function copyRubricJson(){try{await navigator.clipboard.writeText(JSON.str
       situacion:{estado:{ok:'se sigue la programación',risk:'se sigue, con riesgo de no llegar',behind:'no se llega con el calendario actual'}[r.status],margenInicial:r.initialMargin,margenActual:r.margin,variacionEnElPeriodo:r.period.effect,
         finPrevistoDeLasSesiones:r.lastDate,sesionesImpartidas:r.sessionsDone,sesionesTotales:r.sessionsPlanned,sesionesPasadasSinConfirmar:r.pendingTotal,
         ...(r.projection?{proyeccion:{clasesPerdidasHastaHoy:r.projection.loss,clasesTranscurridas:r.projection.elapsed,clasesRestantes:r.projection.remaining,margenFinalEstimado:r.projection.margin,aviso:'estimación lineal, no un dato'}}:{})},
-      periodoResumen:{sesionesImpartidas:r.period.done+r.period.partial,sesionesParciales:r.period.partial,sesionesSuprimidas:r.period.dropped,clasesPerdidas:r.period.lost,diasConDosSesiones:r.period.doubles},
+      periodoResumen:{sesionesImpartidas:r.period.done+r.period.partial,sesionesParciales:r.period.partial,sesionesSuprimidas:r.period.dropped,clasesPerdidas:r.period.lost,clasesDedicadasAOtraActividad:r.period.other,diasConDosSesiones:r.period.doubles},
       incidencias:r.periodEvents.map(e=>({fecha:e.date||null,tipo:FOLLOW_KINDS[e.kind],efectoEnMargen:e.effect,...(e.sessionId?{sesion:sessionName(e)}:{}),motivo:e.reason||null})),
       situacionesDeAprendizaje:r.blocks.filter(b=>b.inPeriod).map(b=>({nombre:blockName(b),estado:{done:'finalizada',progress:'en curso',todo:'sin empezar'}[b.state],sesiones:b.sessions,impartidas:b.done+b.partial,parciales:b.partial,suprimidas:b.dropped,inicio:b.start||null,finPrevisto:b.end||null})),
       notasDelDocente:r.notes.map(n=>({sesion:sessionName(n),fecha:n.date||null,nota:n.note}))};
@@ -1053,7 +1057,7 @@ Reglas:
 - Usa exclusivamente estos datos; no inventes causas, fechas ni medidas.
 - Estilo de acta: formal, impersonal, en tercera persona, uno o dos párrafos breves.
 - Indica primero si se sigue la programación (la referencia es impartir todas las sesiones antes del límite; no hay fechas cerradas por sesión).
-- Después, explica las desviaciones del periodo y sus motivos (incidencias y notas del docente) y su efecto en el margen.
+- Después, explica las desviaciones del periodo y sus motivos (incidencias y notas del docente) y su efecto en el margen. Distingue las clases perdidas (no hubo clase) de las clases dedicadas a otra actividad no programada.
 - Si una nota del docente indica una medida o un ajuste, menciónalo como medida adoptada.
 - Si la proyección existe, preséntala como estimación. Si hay sesiones sin confirmar, indica que los datos pueden estar incompletos.
 - No incluyas nombres de alumnado aunque aparezcan en las notas.
@@ -1068,7 +1072,7 @@ ${JSON.stringify(data,null,1)}`;
     validateSchool(school);school.nonTeaching.sort((a,b)=>a.date.localeCompare(b.date));return school;
   }
   function exportSchool(s){return {format:'cuaderno-calendario-escolar',version:1,...(s.name?{name:s.name}:{}),start:s.start,end:s.end,nonTeaching:s.nonTeaching}}
-  return {FOLLOW_KINDS,followUp,followUpText,followUpForAi,TERM_MODES,FINAL_MODES,validateEvaluations,proposeBlocks,KINDS,STATUSES,STATUS_LABELS,WEEKDAYS,normalizeYear,yearOfDate,validateSchools,iso,addDays,weekday,validateSchool,validateCourse,blank,hasSessions,sessions,teachingDays,plan,storedDate,fixedDate,prune,parseSchool,exportSchool};
+  return {NO_SESSION_KINDS,FOLLOW_KINDS,followUp,followUpText,followUpForAi,TERM_MODES,FINAL_MODES,validateEvaluations,proposeBlocks,KINDS,STATUSES,STATUS_LABELS,WEEKDAYS,normalizeYear,yearOfDate,validateSchools,iso,addDays,weekday,validateSchool,validateCourse,blank,hasSessions,sessions,teachingDays,plan,storedDate,fixedDate,prune,parseSchool,exportSchool};
 });
 
 </script>
@@ -1114,17 +1118,17 @@ function renderCalendario(c){
  <h2>Curso completo</h2>${calendarLegend()}<div class="calendar-year">${calendarMonths(c,school,p,today)}</div>
  <h2>Sesiones por ${esc(levelName(c,0).toLowerCase())}</h2><p class="muted">Seguimiento y notas para revisar la programación el próximo curso.</p>${calendarBlocks(c,p)}</section>`);
 }
-function calendarLegend(){return `<div class="calendar-legend">${[['planned','Sesión prevista'],['done','Hecha'],['partial','Parcial'],['pending','Por confirmar'],['lost','Sin clase (retrasa)'],['free','Clase libre'],['reserve','Margen final'],['closed','No lectivo']].map(([k,t])=>`<span><i class="cal-dot ${k}"></i>${t}</span>`).join('')}</div>`}
+function calendarLegend(){return `<div class="calendar-legend">${[['planned','Sesión prevista'],['done','Hecha'],['partial','Parcial'],['pending','Por confirmar'],['lost','Sin clase (retrasa)'],['other','Otra actividad (retrasa)'],['free','Clase libre'],['reserve','Margen final'],['closed','No lectivo']].map(([k,t])=>`<span><i class="cal-dot ${k}"></i>${t}</span>`).join('')}</div>`}
 function calendarMonths(c,school,p,today){
  const bySlot=new Map();p.sessions.forEach(s=>s.dates.forEach(d=>{if(!bySlot.has(d))bySlot.set(d,[]);bySlot.get(d).push(s)}));
- const closed=new Map(school.nonTeaching.map(d=>[d.date,d])),lost=new Map(p.lost.map(x=>[x.date,x.reason])),teaching=new Set(p.days),wd=new Set(c.calendar.weekdays),doubles=new Set(p.doubles);
+ const closed=new Map(school.nonTeaching.map(d=>[d.date,d])),lost=new Map(p.lost.map(x=>[x.date,x])),teaching=new Set(p.days),wd=new Set(c.calendar.weekdays),doubles=new Set(p.doubles);
  const first=school.start.slice(0,7),last=(c.calendar.end<school.end?c.calendar.end:school.end).slice(0,7),months=[];
  for(let m=first;m<=last;){const [y,mm]=m.split('-').map(Number);months.push(m);m=mm===12?`${y+1}-01`:`${y}-${String(mm+1).padStart(2,'0')}`}
  return months.map(m=>{const [y,mm]=m.split('-').map(Number),start=`${m}-01`,offset=CalendarModel.weekday(start)-1,len=new Date(Date.UTC(y,mm,0)).getUTCDate(),cells=[];
   for(let i=0;i<offset;i++)cells.push('<span class="cal-day blank"></span>');
   for(let d=1;d<=len;d++){const day=`${m}-${String(d).padStart(2,'0')}`,w=CalendarModel.weekday(day),list=bySlot.get(day)||[];let cls='off',title='';
    if(closed.has(day)&&wd.has(w)){cls='closed';title='No lectivo'+(closed.get(day).label?': '+closed.get(day).label:'')}
-   else if(lost.has(day)){cls='lost';title='Sin clase'+(lost.get(day)?': '+lost.get(day):'')}
+   else if(lost.has(day)){const x=lost.get(day);cls=x.kind==='other'?'other':'lost';title=(x.kind==='other'?'Clase dedicada a otra actividad':'Sin clase')+(x.reason?': '+x.reason:'')}
    else if(teaching.has(day)){if(list.length){const s=list[0];cls=s.status==='done'?'done':s.status==='partial'?'partial':day<today?'pending':'planned';title=list.map(x=>calendarSessionName(c,x)+(x.status?' · '+CalendarModel.STATUS_LABELS[x.status]:'')).join('\n')}else{cls=day>p.limit?'reserve':'free';title=day>p.limit?'Margen final':'Clase libre'}}
    if(teaching.has(day)&&day>p.limit&&list.length)cls+=' beyond';
    const clickable=teaching.has(day)||lost.has(day);
@@ -1190,7 +1194,10 @@ function exportSchoolCalendar(){download(`calendario-escolar-${calendarYear()}.j
 function calendarPlanNow(){return CalendarModel.plan(course(),calendarSchool(),calendarToday())}
 function calendarSetStatus(sessionId,status){return calendarChange(c=>{const t=c.calendar.tracking[sessionId]||{};if(status)t.status=status;else delete t.status;t.updatedAt=new Date().toISOString();if(t.status||t.note||t.comment)c.calendar.tracking[sessionId]=t;else delete c.calendar.tracking[sessionId]},'seguimiento de sesión')}
 function calendarConfirmAll(){const ids=calendarPlanNow().pending.map(s=>s.sessionId);return calendarChange(c=>{const now=new Date().toISOString();ids.forEach(id=>{c.calendar.tracking[id]={...(c.calendar.tracking[id]||{}),status:'done',updatedAt:now}})},'marcar sesiones como hechas')}
-function calendarToggleLost(day,lost,reason=''){return calendarChange(c=>{const list=c.calendar.noSession.filter(x=>x.date!==day);if(lost)list.push({date:day,...(reason?{reason}:{})});c.calendar.noSession=list.sort((a,b)=>a.date.localeCompare(b.date))},lost?'día sin clase':'recuperar día de clase')}
+// kind: '' = no hubo clase; 'other' = la clase se dedicó a otra actividad. Las dos retrasan las sesiones siguientes.
+function calendarToggleLost(day,lost,reason='',kind=''){return calendarChange(c=>{const list=c.calendar.noSession.filter(x=>x.date!==day);if(lost)list.push({date:day,...(reason?{reason}:{}),...(kind==='other'?{kind:'other'}:{})});c.calendar.noSession=list.sort((a,b)=>a.date.localeCompare(b.date))},!lost?'recuperar día de clase':kind==='other'?'clase dedicada a otra actividad':'día sin clase')}
+// Cambia el tipo de un día ya marcado sin tocar su motivo.
+function calendarSetLostKind(day,kind){return calendarChange(c=>{const x=c.calendar.noSession.find(y=>y.date===day);if(!x)throw new Error('Ese día no está marcado.');if(kind==='other')x.kind='other';else delete x.kind},kind==='other'?'marcar como otra actividad':'marcar como sin clase')}
 function calendarToggleDouble(day,on){return calendarChange(c=>{const list=c.calendar.doubles.filter(x=>x.date!==day);if(on)list.push({date:day});c.calendar.doubles=list.sort((a,b)=>a.date.localeCompare(b.date))},on?'dos sesiones el mismo día':'quitar sesión doble')}
 // Fecha fija = la fecha de la sesión en Estructura (dd/mm/aaaa). Mover desde el calendario escribe esa misma fecha.
 function calendarSetFixed(sessionId,day){return calendarChange(c=>{const m=String(day||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);for(const sd of c.sdas)for(const se of sd.sessions)if(se.id===sessionId)se.date=m?`${m[3]}/${m[2]}/${m[1]}`:'';c.calendar.anchors=c.calendar.anchors.filter(a=>a.sessionId!==sessionId)},day?'mover sesión a una fecha fija':'quitar fecha fija')}
@@ -1208,8 +1215,8 @@ function openCalendarSession(sessionId){const c=course(),s=calendarPlanNow().ses
 function openCalendarDay(day){
  const c=course(),p=calendarPlanNow(),list=p.sessions.filter(s=>s.dates.includes(day)),lost=p.lost.find(x=>x.date===day),double=p.doubles.includes(day);
  openModal(`<h2>${esc(calendarDate(day,true))}</h2>
- ${lost?`<p class="notice warn">Marcado sin clase${lost.reason?': '+esc(lost.reason):''}. Las sesiones se han retrasado una clase.</p><div class="toolbar"><button class="btn primary" onclick="closeModal();calendarToggleLost(${jsArg(day)},false)">Sí hubo clase (adelantar)</button><button class="btn" onclick="closeModal()">Cerrar</button></div>`:
- `<div class="toolbar"><label>Motivo (opcional)<input type="text" id="calendarLostReason" maxlength="200" placeholder="Excursión, huelga, examen de otra materia…"></label><button class="btn" onclick="const r=document.getElementById('calendarLostReason').value.trim();closeModal();calendarToggleLost(${jsArg(day)},true,r)">No hubo clase este día (retrasar)</button><button class="btn" onclick="closeModal();calendarToggleDouble(${jsArg(day)},${!double})">${double?'Quitar la segunda sesión de este día':'Este día se dieron dos sesiones (adelantar)'}</button></div>
+ ${lost?(lost.kind==='other'?`<p class="notice warn">Clase dedicada a otra actividad${lost.reason?': '+esc(lost.reason):''}. Las sesiones se han retrasado una clase.</p><div class="toolbar"><button class="btn primary" onclick="closeModal();calendarToggleLost(${jsArg(day)},false)">Se dio la sesión prevista (adelantar)</button><button class="btn" onclick="closeModal();calendarSetLostKind(${jsArg(day)},'')">Cambiar a «No hubo clase»</button><button class="btn" onclick="closeModal()">Cerrar</button></div>`:`<p class="notice warn">Marcado sin clase${lost.reason?': '+esc(lost.reason):''}. Las sesiones se han retrasado una clase.</p><div class="toolbar"><button class="btn primary" onclick="closeModal();calendarToggleLost(${jsArg(day)},false)">Sí hubo clase (adelantar)</button><button class="btn" onclick="closeModal();calendarSetLostKind(${jsArg(day)},'other')">Cambiar a «Clase dedicada a otra actividad»</button><button class="btn" onclick="closeModal()">Cerrar</button></div>`):
+ `<div class="toolbar"><label>Motivo (opcional)<input type="text" id="calendarLostReason" maxlength="200" placeholder="Excursión, huelga, corrección del examen…"></label><button class="btn" onclick="const r=document.getElementById('calendarLostReason').value.trim();closeModal();calendarToggleLost(${jsArg(day)},true,r)">No hubo clase este día (retrasar)</button><button class="btn" title="Hubo clase, pero no se dio la sesión prevista (corrección, repaso, imprevisto). Indica en Motivo a qué se dedicó." onclick="const r=document.getElementById('calendarLostReason').value.trim();closeModal();calendarToggleLost(${jsArg(day)},true,r,'other')">Clase dedicada a otra actividad (retrasar)</button><button class="btn" onclick="closeModal();calendarToggleDouble(${jsArg(day)},${!double})">${double?'Quitar la segunda sesión de este día':'Este día se dieron dos sesiones (adelantar)'}</button></div>
  ${list.map(s=>calendarSessionActions(c,s,day)).join('')||'<p class="muted">No hay ninguna sesión prevista en esta clase.</p><div class="toolbar"><button class="btn" onclick="closeModal()">Cerrar</button></div>'}
  ${calendarMoveHere(c,p,day)}`}`);
 }
@@ -1245,7 +1252,7 @@ function renderFollowUp(c){
   behind:['notice dangerbox','No se llega con el calendario actual',`Faltan ${Math.max(1,-r.margin)} clases para impartir todas las sesiones antes del límite (${calendarDate(r.limit)}).`]}[r.status];
  const presets=followUpPresets(c,school,today);
  const evName=e=>e.sessionId?names.sessionName(e):'';
- const rows=r.periodEvents.map(e=>`<tr class="${e.effect<0?'warn':''}"><td>${e.date?calendarDate(e.date):'—'}</td><td>${esc(CalendarModel.FOLLOW_KINDS[e.kind])}</td><td>${esc(evName(e))||'—'}</td><td>${e.reason?esc(e.reason):e.kind==='double'?'—':`<span class="review-state warn">Sin ${e.kind==='lost'?'motivo':'nota'}</span>${e.sessionId?` <button class="btn small" onclick="openCalendarSession(${jsArg(e.sessionId)})">Añadir nota</button>`:''}`}</td><td class="num">${e.effect?followUpSigned(e.effect):'0'}</td></tr>`).join('');
+ const rows=r.periodEvents.map(e=>`<tr class="${e.effect<0?'warn':''}"><td>${e.date?calendarDate(e.date):'—'}</td><td>${esc(CalendarModel.FOLLOW_KINDS[e.kind])}</td><td>${esc(evName(e))||'—'}</td><td>${e.reason?esc(e.reason):e.kind==='double'?'—':`<span class="review-state warn">Sin ${e.kind==='lost'||e.kind==='other'?'motivo':'nota'}</span>${e.sessionId?` <button class="btn small" onclick="openCalendarSession(${jsArg(e.sessionId)})">Añadir nota</button>`:''}`}</td><td class="num">${e.effect?followUpSigned(e.effect):'0'}</td></tr>`).join('');
  const blocks=r.blocks.map(b=>`<tr class="${b.beyondLimit?'error':''}"><td><b>${esc(names.blockName(b))}</b></td><td>${b.done+b.partial} de ${b.sessions-b.dropped}${b.dropped?` <span class="tiny muted">(${b.dropped} suprimida${b.dropped>1?'s':''})</span>`:''}</td><td>${b.partial||'—'}</td><td>${b.start?calendarDate(b.start)+' → '+calendarDate(b.end):'—'}</td><td><span class="review-state ${b.state==='done'?'':b.beyondLimit?'error':'warn'}">${b.state==='done'?'Finalizada':b.state==='progress'?'En curso':'Sin empezar'}</span></td></tr>`).join('');
  const notes=r.notes.map(n=>`<li><b>${esc(names.sessionName(n))}</b>${n.date?` · ${calendarDate(n.date)}`:''}<div>${esc(n.note)}</div></li>`).join('');
  shell(`<section class="follow-up"><div class="section-head">${title}<button class="btn" onclick="nav('Calendario')">Abrir Calendario</button></div>
@@ -3888,8 +3895,8 @@ const PAGES = {
       `<b>Calendario del centro</b> (una sola vez por curso escolar, sirve para todas tus materias): ${T('Introducir calendario del centro')} → ${T('Formato para IA')} → pégalo en una IA y adjunta el calendario oficial (PDF o imagen) → pega aquí el JSON que te devuelva → ${P('Validar y guardar')}.`,
       `<b>Configurar grupo</b>: marca los días de la semana con clase, el último día de clase y los días de margen al final (exámenes, recuperaciones).`,
       'La app coloca cada sesión en una fecha y te avisa de si terminarás a tiempo.',
-      'Cuando pasen las clases, confirma qué se hizo: hecha, «No hubo clase» o «Parcial».'],
-    note: ['«No hubo clase» retrasa una clase todas las sesiones siguientes. «Parcial» hace que esa sesión continúe en la clase siguiente.', 'Las notas de seguimiento te sirven para revisar la programación el curso que viene.'] },
+      'Cuando pasen las clases, confirma qué se hizo: hecha, «Parcial», «No hubo clase» o «Clase dedicada a otra actividad» (hubo clase, pero se dedicó a corregir, repasar o a un imprevisto).'],
+    note: ['«No hubo clase» y «Clase dedicada a otra actividad» retrasan una clase todas las sesiones siguientes; el seguimiento las cuenta por separado. Escribe en Motivo qué pasó. «Parcial» hace que esa sesión continúe en la clase siguiente.', 'Las notas de seguimiento te sirven para revisar la programación el curso que viene.'] },
   Cuaderno: { title: 'Cuaderno', what: 'Vista de tabla, como el Excel de siempre: todas las notas del grupo por actividad.', steps: [
       'Elige el bloque (unidad/SDA) que quieres ver.',
       'Pulsa una celda para ir a evaluar a ese alumno en esa actividad.'],
@@ -3908,9 +3915,9 @@ const PAGES = {
   'Seguimiento de la programación': { title: 'Seguimiento de la programación', what: 'Te dice si estás siguiendo tu programación y por qué no, a partir de lo que anotas en el Calendario. Pensado para las actas de departamento. Solo consulta.', steps: [
       'Elige el periodo (por ejemplo, desde la última reunión de departamento) con los botones o con las fechas «Desde» y «Hasta».',
       'Mira el veredicto: la referencia es impartir todas las sesiones antes del límite (último día de clase menos el margen final). No hay fechas cerradas por sesión.',
-      '«Qué ha cambiado el margen» explica cada clase ganada o perdida: clases sin clase, días con dos sesiones, sesiones parciales y suprimidas, con su motivo o nota.',
+      '«Qué ha cambiado el margen» explica cada clase ganada o perdida: clases perdidas, clases dedicadas a otra actividad, días con dos sesiones, sesiones parciales y suprimidas, con su motivo o nota.',
       `Copia el texto ya redactado con ${T('Copiar texto')}, o usa ${T('Copiar datos para IA')} y pégalo en la IA que elijas para que redacte el acta.`],
-    note: ['El motivo de una clase perdida es el que escribes al marcar «No hubo clase». El de una sesión parcial o suprimida es su «Nota para la revisión del próximo curso»: si falta, aparece «Sin nota» con un botón para añadirla.', 'Los datos para IA no incluyen alumnado, pero revisa que tus notas no contengan nombres de alumnos.', 'Si hay sesiones pasadas sin confirmar en el Calendario, el seguimiento puede estar incompleto.'] },
+    note: ['El motivo de una clase perdida o dedicada a otra actividad es el que escribes en Motivo al marcar el día. El de una sesión parcial o suprimida es su «Nota para la revisión del próximo curso»: si falta, aparece «Sin nota» con un botón para añadirla.', 'Los datos para IA no incluyen alumnado, pero revisa que tus notas no contengan nombres de alumnos.', 'Si hay sesiones pasadas sin confirmar en el Calendario, el seguimiento puede estar incompleto.'] },
   Cierre: { title: 'Cierre de evaluación', what: 'Prepara la sesión de evaluación o el boletín: nota de la evaluación actual de cada alumno con sus comentarios y faltas. Solo consulta.', steps: [
       'Revisa la nota y los comentarios de cada alumno.',
       `${T('Exportar cierre a Excel (.xlsx)')} si quieres llevarlo a la sesión de evaluación.`,
