@@ -353,6 +353,6 @@ function tick(){
   try { wrapCleaners(); hookPageButton(); hookImportHelp(); } catch(e){ console.warn('Ayuda contextual:', e); }
 }
 new MutationObserver(() => { if(!scheduled){ scheduled = true; requestAnimationFrame(tick); } }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-window.CuadernoAyuda = { openPage: openDrawer, close: closeDrawer, _extractJson: extractJson };
+window.CuadernoAyuda = { openPage: openDrawer, close: closeDrawer, _extractJson: extractJson, continuationText(){ const c = targetCourse(); if(!c) return null; const st = partState(c); return st.ok ? { text: continuationPrompt(c, st), next: st.next } : { error: st.why }; } };
 })();
 </script>
