@@ -3997,7 +3997,7 @@ function partState(c){
   const led = c && c.programming && c.programming.fragmentation;
   if(!c || !c.programming) return { ok: false, why: 'Esta materia se creó a mano (o duplicando otra), no desde una programación importada por partes. Por eso no admite «partes».' };
   if(!led || !Array.isArray(led.entries) || !led.entries.length) return { ok: false, why: 'Esta materia se importó de una sola vez (programación completa). No admite partes adicionales.' };
-  if(led.entries[led.entries.length - 1].hasMore === false) return { ok: false, why: `La programación ya está completa: se importaron ${led.entries.length} parte(s) y la última estaba marcada como final.` };
+  if(led.entries[led.entries.length - 1].hasMore === false) return { ok: false, reopenable: true, why: `La programación ya está completa: se importaron ${led.entries.length} parte(s) y la última estaba marcada como final.` };
   return { ok: true, led, next: led.entries.length + 1 };
 }
 function continuationPrompt(c, st){
@@ -4022,6 +4022,11 @@ ${typeof ProgrammingContract !== 'undefined' ? ProgrammingContract.instructions(
 }
 function programmingPartBlock(){
   const c = targetCourse(), st = partState(c);
+  if(!st.ok && st.reopenable) return `<div class="hc-state bad">✗ ${st.why}</div>
+    <p><strong>¿Faltan SDA por importar?</strong> Ocurre si la última parte se marcó como final por error, o si borraste una SDA y quieres volver a importarla. Pulsa el botón para <strong>reabrir</strong> la programación: no borra nada de lo que ya tienes ni toca notas; solo permite añadir más partes. Si te equivocas, pulsa ${T('Deshacer')}.</p>
+    <div class="hc-actions"><button type="button" class="btn small primary" data-hc-act="reopen">Reabrir programación</button></div>
+    <div data-hc-status></div>
+    <p><strong>Otras opciones:</strong> ve a ${T('Estructura')} y pulsa ${T('+ Añadir Unidad')} para crearlas a mano, o crea una materia nueva desde programación con las SDA que faltan y copia lo que necesites.</p>`;
   if(!st.ok) return `<div class="hc-state bad">✗ ${st.why}</div>
     <p><strong>Cómo añadir más SDA a esta materia:</strong></p>
     <ul><li>Ve a ${T('Estructura')} y pulsa ${T('+ Añadir Unidad')} para crearlas a mano.</li>
@@ -4132,6 +4137,16 @@ function hookImportHelp(){
     const a = e.target.closest('[data-hc-act]'); if(!a) return;
     const status = d.querySelector('[data-hc-status]');
     if(a.dataset.hcAct === 'copy-next') copyText('SIGUIENTE', status, 'Copiado. Pégalo en la misma conversación de la IA.');
+    if(a.dataset.hcAct === 'reopen'){
+      const c = targetCourse(), st = partState(c);
+      if(!st.reopenable){ status.innerHTML = '<span class="hc-copied">No hace falta reabrir esta programación.</span>'; return; }
+      const led = c.programming.fragmentation, last = led.entries[led.entries.length - 1];
+      last.hasMore = true; if(last.source && last.source.fragment) last.source.fragment.hasMore = true;
+      led.total = null; /* el número total previsto ya no es fiable */
+      save(); render();
+      const box = d.querySelector('.hc-in'); if(box) box.innerHTML = IMPORTS.programmingPart.html();
+      return;
+    }
     if(a.dataset.hcAct === 'copy-cont'){ const c = targetCourse(), st = partState(c); if(st.ok) copyText(continuationPrompt(c, st), status, 'Mensaje copiado. Pégalo en la IA, adjunta tu programación y completa «Contenido de esta parte».'); }
   });
   const title = box.querySelector('.modal-title') || box.querySelector('h2');
