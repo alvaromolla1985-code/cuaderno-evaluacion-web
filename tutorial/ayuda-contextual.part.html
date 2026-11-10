@@ -53,7 +53,7 @@ const PAGES = {
   Evaluar: { title: 'Evaluar', what: 'Aquí pones las notas de cada actividad a todo el grupo.', steps: [
       'Elige la unidad/SDA, la sesión y la actividad en los selectores de arriba.',
       'Escribe la nota de cada alumno (0 a 10). <strong>Tab</strong> pasa al siguiente campo; <strong>Enter</strong> / <strong>Mayús+Enter</strong> al alumno siguiente / anterior.',
-      'Si la actividad usa rúbrica, ábrela y marca el nivel de cada indicador: la nota se calcula sola.',
+      'Si la actividad usa rúbrica o lista de cotejo con ítems, ábrela y marca el nivel de cada indicador o ítem: la nota se calcula sola. En la lista de cotejo puedes usar «Marcar todos los ítems».',
       'Puedes añadir una observación a cada alumno.',
       `${T('Completar alumno')} te permite evaluar a un alumno concreto en sus actividades.`],
     note: ['<strong>Un 0 es una nota.</strong> Un campo vacío significa «pendiente» y no cuenta.', 'Se guarda solo: no hay botón Guardar.', 'Si sale «evaluable sin criterios», asígnale criterios en Estructura; si no, esa nota no computa.'] },
@@ -96,7 +96,7 @@ const PAGES = {
     note: ['Las calificaciones oficiales se registran en ÍTACA.', 'El Excel contiene datos personales: guárdalo en un espacio autorizado.'] },
   Estructura: { title: 'Estructura', what: 'Tu programación dentro de la app: unidades/SDA, sesiones y actividades, y cómo se evalúa cada actividad.', steps: [
       `Elige o crea una unidad/SDA (${T('+ Añadir Unidad')}) y sus sesiones (${T('+ Añadir Sesión')}).`,
-      'Dentro de cada sesión crea las actividades. En cada actividad indica si es evaluable, a qué criterios se asocia, su factor (cuánto pesa frente a otras del mismo criterio) y el instrumento (nota directa o rúbrica).',
+      'Dentro de cada sesión crea las actividades. En cada actividad indica si es evaluable, a qué criterios se asocia, su factor (cuánto pesa frente a otras del mismo criterio) y el instrumento (nota directa, rúbrica o lista de cotejo; en la lista eliges una escala —Sí/No, Hecho/A medias/No hecho, Conseguido/En proceso/No conseguido o personalizada— y añades ítems vinculados a criterios).',
       'Marca el estado de cada unidad: Planificada, Activa o Completada.'],
     note: ['⚠ Una actividad evaluable sin criterios no computa en ninguna nota.', `Para añadir más SDA: créalas aquí a mano o, si importaste la programación por partes y no estaba terminada, con ${T('Añadir parte de programación')} (arriba).`, 'Después de cambios grandes, pasa por Revisión.'] },
   'Revisión': { title: 'Revisión de la programación', what: 'Comprueba que todo cuadra antes de evaluar: cada criterio con evidencias, pesos, rúbricas… Solo consulta.', steps: [
