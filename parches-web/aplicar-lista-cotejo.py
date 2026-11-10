@@ -5,6 +5,7 @@ Hace que el instrumento «Lista de cotejo» use el motor de rúbricas:
 - Plantillas de escala: Sí/No · Hecho/A medias/No hecho · Conseguido/En proceso/No conseguido · Personalizada.
 - Una lista de cotejo SIN ítems sigue funcionando como nota directa (compatibilidad total).
 - Al calificar: botones con el nombre del nivel y «Marcar todos».
+- Importar copia de materia: si el archivo es una copia completa, lo explica en vez de dar un error técnico.
 
 Uso (desde la carpeta de la web, después de regenerar index.html y aplicar el tutorial):
     python3 parches-web/aplicar-lista-cotejo.py
@@ -170,6 +171,11 @@ rep('calificar: marcar todos',
 rep('calificar: sustituye nota directa',
     " if(ac.instrument==='rubric'&&indicator.criterion&&ac.criteria.includes(indicator.criterion))delete c.grades[",
     " if(usesIndicators(ac)&&indicator.criterion&&ac.criteria.includes(indicator.criterion))delete c.grades[")
+
+# --- Importar copia de materia: detectar una copia completa (mensaje claro) ---
+rep('importar: copia completa en materia',
+    "candidate=deep(APP);const incoming=adaptImportedCourse(data);",
+    "if(data&&typeof data==='object'&&Array.isArray(data.courses)&&!Array.isArray(data.students))throw new Error('este archivo es una copia completa ('+data.courses.length+(data.courses.length===1?' materia':' materias')+'). Para cargarla usa «Restaurar copia completa». Si solo quieres pasar una materia, ábrela en el otro dispositivo y usa «Exportar materia».');candidate=deep(APP);const incoming=adaptImportedCourse(data);")
 
 # --- Ayuda contextual (también en tutorial/ayuda-contextual.part.html) ---
 HELP = [

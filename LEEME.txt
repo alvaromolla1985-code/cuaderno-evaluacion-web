@@ -41,6 +41,7 @@ LISTA DE COTEJO CON ÍTEMS (SOLO VERSIÓN WEB)
 La web permite configurar la «Lista de cotejo» con ítems vinculados a criterios y una escala
 (Sí/No · Hecho/A medias/No hecho · Conseguido/En proceso/No conseguido · personalizada).
 Usa el motor de las rúbricas. Una lista de cotejo SIN ítems sigue funcionando como nota directa.
+El mismo script añade un aviso claro si se usa una copia completa en «Importar copia de materia».
 Su código está en parches-web/aplicar-lista-cotejo.py y NO forma parte de la versión de escritorio.
 IMPORTANTE:
 - Si vuelves a generar index.html desde la versión de escritorio, este cambio desaparece.

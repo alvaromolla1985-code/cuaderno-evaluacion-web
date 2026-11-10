@@ -2527,7 +2527,7 @@ function importJson(txt,mode,options={}){
     const data=parseImportJson(txt);
     if(mode==='all')candidate=data;
     else if(mode==='course'){
-      candidate=deep(APP);const incoming=adaptImportedCourse(data);
+      if(data&&typeof data==='object'&&Array.isArray(data.courses)&&!Array.isArray(data.students))throw new Error('este archivo es una copia completa ('+data.courses.length+(data.courses.length===1?' materia':' materias')+'). Para cargarla usa «Restaurar copia completa». Si solo quieres pasar una materia, ábrela en el otro dispositivo y usa «Exportar materia».');candidate=deep(APP);const incoming=adaptImportedCourse(data);
       candidate.courses.push(incoming);candidate.selectedCourseId=incoming.id;
     }else throw new Error('Modo de importación desconocido');
     preflightImport(candidate);candidate=normalizeApp(candidate);preflightImport(candidate);
