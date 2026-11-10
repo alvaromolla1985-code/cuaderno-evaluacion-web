@@ -1,5 +1,5 @@
 /* Modo sin conexión: guarda en caché únicamente los archivos de la aplicación, nunca datos. */
-const CACHE = 'cuaderno-1.8.0-material-tut1794351615';
+const CACHE = 'cuaderno-1.8.0-material-tut1794352251';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon.svg', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

@@ -1196,10 +1196,31 @@ ${JSON.stringify(data,null,1)}`;
     return out;
   }
   // Nombre a mostrar: el puesto por el docente o, si no hay, el final de la ruta/URL.
+  // Enlaces: nombre legible a partir de la dirección (archivo de OneDrive/SharePoint/Drive o servicio conocido).
+  const SHAREPOINT_TYPES={p:'presentation',w:'document',x:'sheet',b:'pdf',f:'folder',v:'video',i:'image'};
+  function urlInfo(target){
+    let u;try{u=new URL(target)}catch{return {host:'',file:'',type:''}}
+    const host=u.hostname.replace(/^www\./,''),segments=u.pathname.split('/').filter(Boolean).map(x=>{try{return decodeURIComponent(x)}catch{return x}});
+    const params=[...u.searchParams.values()].map(x=>{try{return decodeURIComponent(x)}catch{return x}});
+    const named=[...segments].reverse().find(x=>/\.[a-z0-9]{2,5}$/i.test(x)&&!/\.(aspx|html?|php)$/i.test(x))||params.find(x=>/\.[a-z0-9]{2,5}$/i.test(x)&&!/^https?:/i.test(x))||'';
+    const code=u.pathname.match(/^\/:([a-z]):\//i);
+    const type=code?SHAREPOINT_TYPES[code[1].toLowerCase()]||'':'';
+    return {host,file:named.split(/[\\/]/).pop(),type};
+  }
+  const SERVICE_NAMES=[[/canva\./,'Diseño de Canva'],[/genial\.ly|genially/,'Genially'],[/youtube\.|youtu\.be/,'Vídeo de YouTube'],[/vimeo\./,'Vídeo de Vimeo'],
+    [/docs\.google\.com\/presentation/,'Presentación de Google'],[/docs\.google\.com\/document/,'Documento de Google'],[/docs\.google\.com\/spreadsheets/,'Hoja de cálculo de Google'],[/docs\.google\.com\/forms|forms\.gle/,'Formulario de Google'],
+    [/drive\.google/,'Archivo de Google Drive'],[/sharepoint|onedrive|1drv\.ms/,'Archivo de OneDrive'],[/aules|moodle/,'Aules'],[/dropbox/,'Archivo de Dropbox']];
+  // Servicio en pocas palabras para la línea secundaria.
+  function serviceName(target){const h=urlInfo(target).host;return /sharepoint|onedrive|1drv/.test(h)?'OneDrive':/google/.test(h)?'Google Drive':/canva/.test(h)?'Canva':/genial/.test(h)?'Genially':/youtu/.test(h)?'YouTube':/aules|moodle/.test(h)?'Aules':/dropbox/.test(h)?'Dropbox':h}
   function displayName(item){
     if(item.label&&item.label.trim())return item.label.trim();
     if(item.kind==='note')return item.target.trim().split('\n')[0].slice(0,80);
-    if(item.kind==='url'){try{const u=new URL(item.target);return u.hostname.replace(/^www\./,'')+(u.pathname.length>1?u.pathname:'')}catch{return item.target}}
+    if(item.kind==='url'){
+      const info=urlInfo(item.target);if(info.file)return info.file;
+      if(info.type==='folder')return /sharepoint|onedrive|1drv/i.test(info.host)?'Carpeta de OneDrive':'Carpeta en la nube';
+      const full=String(item.target).toLowerCase();const known=SERVICE_NAMES.find(([re])=>re.test(full));
+      return known?known[1]:info.host||item.target;
+    }
     return String(item.target).split(/[\\/]/).filter(Boolean).pop()||item.target;
   }
   const EXT_GROUPS={presentation:['ppt','pptx','pps','ppsx','odp','key'],pdf:['pdf'],document:['doc','docx','odt','rtf','txt','md','pages'],sheet:['xls','xlsx','ods','csv','numbers'],image:['png','jpg','jpeg','gif','webp','svg'],video:['mp4','mov','avi','mkv','webm'],audio:['mp3','wav','ogg','m4a']};
@@ -1209,7 +1230,10 @@ ${JSON.stringify(data,null,1)}`;
     if(item.kind==='folder')return 'folder';
     if(item.kind==='note')return 'note';
     if(item.kind==='url'){
-      const h=(()=>{try{return new URL(item.target).hostname}catch{return ''}})();
+      const h=(()=>{try{return new URL(item.target).hostname}catch{return ''}})(),info=urlInfo(item.target);
+      if(info.type)return info.type;
+      const ext=extension(info.file);for(const [group,list] of Object.entries(EXT_GROUPS))if(ext&&list.includes(ext))return group;
+      if(/docs\.google\.com\/presentation/i.test(item.target))return 'presentation';if(/docs\.google\.com\/document/i.test(item.target))return 'document';if(/docs\.google\.com\/spreadsheets/i.test(item.target))return 'sheet';
       if(/canva\./i.test(h))return 'canva';if(/genial\.ly|genially/i.test(h))return 'genially';
       if(/youtube\.|youtu\.be|vimeo\./i.test(h))return 'video';
       if(/docs\.google|drive\.google|onedrive|sharepoint|1drv\.ms|dropbox/i.test(h))return 'cloud';
@@ -1296,7 +1320,7 @@ ${JSON.stringify(data,null,1)}`;
     }));
     return c;
   }
-  return {KINDS,KIND_LABELS,LIMITS,validate,validateItem,blank,list,count,primary,owners,prune,remap,displayName,flavor,extension,join,relativize,isUrl,isAbsolute,newId,folderNumber,sessionNumbers,proposeLinks,applyLinks};
+  return {urlInfo,serviceName,KINDS,KIND_LABELS,LIMITS,validate,validateItem,blank,list,count,primary,owners,prune,remap,displayName,flavor,extension,join,relativize,isUrl,isAbsolute,newId,folderNumber,sessionNumbers,proposeLinks,applyLinks};
 });
 </script>
 <script>/* calendar-ui.js */
@@ -1531,12 +1555,12 @@ function copyFollowUpForAi(){const c=course();return followUpCopy(CalendarModel.
 .res-tile{display:flex;flex-direction:column;align-items:flex-start;gap:.15rem;text-align:left;padding:.65rem .75rem;border:1px solid var(--line,#dcdfe4);border-radius:10px;background:var(--card,#fff);cursor:pointer;font:inherit;color:inherit;min-height:4.6rem}
 .res-tile:hover{border-color:var(--accent,#2f6fb3);background:#f7f9fc}.res-tile:focus-visible{outline:2px solid var(--accent,#2f6fb3);outline-offset:2px}
 .res-tile.primary{border:2px solid var(--accent,#2f6fb3)}.res-tile.note{background:#f6f9f2;cursor:default}.res-tile.missing,.res-row.missing{border-color:#c0392b;background:#fdf1ef}
-.res-tile .res-title{font-weight:600;font-size:.88rem;line-height:1.25;word-break:break-word}.res-sub{font-size:.74rem;color:var(--muted,#6b7280);word-break:break-word}
+.res-tile .res-title{font-weight:600;font-size:.88rem;line-height:1.25;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.res-tile .res-sub{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.res-sub{font-size:.74rem;color:var(--muted,#6b7280);word-break:break-word}
 .res-pill{font-size:.68rem;font-weight:600;padding:.05rem .4rem;border-radius:6px;background:#e6f1fb;color:#0c447c;margin-left:.3rem;vertical-align:1px}
 .res-missing{font-size:.74rem;color:#a12a1b}
 .res-rows{list-style:none;margin:.4rem 0;padding:0;display:grid;gap:.35rem}
 .res-row{display:flex;align-items:center;gap:.6rem;padding:.45rem .6rem;border:1px solid var(--line,#dcdfe4);border-radius:10px;background:var(--card,#fff)}
-.res-row .res-main{flex:1;min-width:0}.res-row .res-title{font-weight:600;font-size:.92rem}.res-row .res-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res-row .res-main{flex:1;min-width:0}.res-row .res-title{font-weight:600;font-size:.92rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.res-row .res-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .res-menu{position:relative}.res-menu>summary{list-style:none;cursor:pointer;padding:.2rem .55rem;border:1px solid var(--line,#dcdfe4);border-radius:8px;font-weight:700;line-height:1.2;background:#fff}
 .res-menu>summary::-webkit-details-marker{display:none}.res-menu[open]>summary{background:#eef3fa}
 .res-menu .res-menu-box{position:absolute;right:0;top:calc(100% + 4px);z-index:30;background:#fff;border:1px solid var(--line,#dcdfe4);border-radius:10px;padding:.5rem;box-shadow:0 8px 24px rgba(0,0,0,.12);display:grid;gap:.35rem;min-width:15rem}
@@ -1591,12 +1615,12 @@ async function resourceChange(change,label){
 }
 function resourceUsable(item){return item.kind==='url'||item.kind==='note'||resourceDesktop()}
 // Nombre limpio: el puesto por el docente o el del archivo sin extensión.
-function resourceTitle(item){if(item.label&&item.label.trim())return item.label.trim();const n=ResourceModel.displayName(item);return item.kind==='file'?n.replace(/\.[a-z0-9]{1,5}$/i,''):n}
+function resourceTitle(item){if(item.label&&item.label.trim())return item.label.trim();const n=ResourceModel.displayName(item);return item.kind==='file'||item.kind==='url'?n.replace(/\.(pptx?|ppsx?|pdf|docx?|odt|odp|ods|xlsx?|csv|rtf|txt|key|pages|numbers|mp4|mp3|png|jpe?g)$/i,''):n}
 // Línea secundaria: tipo y carpeta que lo contiene (la ruta completa queda en el texto emergente).
 function resourceSubtitle(item){
  const f=ResourceModel.flavor(item),type=RESOURCE_KIND_TEXT[f]||'Archivo';
  if(item.kind==='file'||item.kind==='folder'){const parts=String(item.target).split(/[\\/]/).filter(Boolean);const parent=parts.length>1?parts[parts.length-2]:'';return parent?type+' · '+parent:type}
- if(item.kind==='url'){try{return type+' · '+new URL(item.target).hostname.replace(/^www\./,'')}catch{return type}}
+ if(item.kind==='url'){const service=ResourceModel.serviceName(item.target);return f==='cloud'||f==='canva'||f==='genially'||f==='aules'||f==='video'&&/YouTube/.test(service)?service:service?type+' · '+service:type}
  return type;
 }
 function resourceTooltip(c,item){return item.kind==='file'||item.kind==='folder'?ResourceModel.join(resourceBase(c),item.target):item.kind==='url'?item.target:''}
