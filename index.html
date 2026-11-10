@@ -1126,6 +1126,179 @@ ${JSON.stringify(data,null,1)}`;
 });
 
 </script>
+<script>/* resource-model.js */
+/* Recursos (material) de una materia: enlaces a archivos, carpetas, páginas web y notas breves.
+   Se guardan en course.resources, fuera del calendario, asociados a la materia ('course'), a una SDA o a una
+   sesión por su identificador. Así el material se mueve con la sesión aunque el calendario se retrase.
+   Los archivos y carpetas se guardan, si es posible, como ruta relativa a la carpeta base de la materia:
+   al cambiar la carpeta base (otro ordenador, curso siguiente) todos los enlaces siguen funcionando.
+   La app nunca copia el material: solo guarda el enlace. */
+(function(root,factory){
+  const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.ResourceModel=api;
+})(typeof globalThis==='object'?globalThis:this,function(){
+  'use strict';
+  const KINDS=['file','folder','url','note'];
+  const KIND_LABELS={file:'Archivo',folder:'Carpeta',url:'Enlace web',note:'Nota'};
+  const LIMITS={owners:5000,items:100,label:200,target:2000,base:1000};
+  const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
+  function fail(message){throw new Error('Material: '+message)}
+  function check(ok,message){if(!ok)fail(message)}
+  const isUrl=value=>typeof value==='string'&&/^https?:\/\/[^\s]+$/i.test(value.trim());
+  // Ruta absoluta en Windows (C:\…, \\servidor\…) o en macOS/Linux (/…).
+  const isAbsolute=value=>typeof value==='string'&&(/^[a-zA-Z]:[\\/]/.test(value)||/^[\\/]{2}[^\\/]/.test(value)||value.startsWith('/'));
+  function validateItem(item){
+    check(object(item),'elemento inválido');
+    check(Object.keys(item).every(k=>['id','kind','label','target','primary'].includes(k)),'campos no admitidos en un elemento');
+    check(typeof item.id==='string'&&item.id.length>0&&item.id.length<=100,'elemento sin identificador');
+    check(KINDS.includes(item.kind),'tipo de elemento inválido');
+    check(typeof item.label==='string'&&item.label.length<=LIMITS.label,'nombre del elemento inválido');
+    check(typeof item.target==='string'&&item.target.trim().length>0&&item.target.length<=LIMITS.target,'elemento sin destino');
+    if(item.kind==='url')check(isUrl(item.target),'los enlaces web deben empezar por http:// o https://');
+    if(item.kind==='file'||item.kind==='folder')check(!/[\u0000-\u001f]/.test(item.target),'ruta inválida');
+    check(item.primary===undefined||typeof item.primary==='boolean','principal debe ser verdadero o falso');
+  }
+  function validate(resources){
+    if(resources===undefined)return;
+    check(object(resources),'formato inválido');
+    check(Object.keys(resources).every(k=>['base','items'].includes(k)),'campos no admitidos');
+    check(resources.base===undefined||typeof resources.base==='string'&&resources.base.length<=LIMITS.base&&!/[\u0000-\u001f]/.test(resources.base),'carpeta base inválida');
+    check(object(resources.items),'lista de material inválida');
+    const owners=Object.entries(resources.items);check(owners.length<=LIMITS.owners,'demasiados elementos');
+    const ids=new Set();
+    for(const [owner,list] of owners){
+      check(owner.length>0&&owner.length<=200,'propietario inválido');
+      check(Array.isArray(list)&&list.length<=LIMITS.items,'como máximo '+LIMITS.items+' elementos por sesión');
+      list.forEach(item=>{validateItem(item);check(!ids.has(item.id),'identificador repetido: '+item.id);ids.add(item.id)});
+      check(list.filter(x=>x.primary).length<=1,'solo puede haber un elemento principal');
+    }
+  }
+  function blank(){return {items:{}}}
+  function list(c,owner){return c?.resources?.items?.[owner]||[]}
+  function count(c,owner){return list(c,owner).length}
+  function primary(c,owner){const l=list(c,owner);return l.find(x=>x.primary)||null}
+  // Propietarios válidos: la materia, sus SDA y sus sesiones.
+  function owners(c){const set=new Set(['course']);(c.sdas||[]).forEach(sd=>{set.add(sd.id);(sd.sessions||[]).forEach(se=>set.add(se.id))});return set}
+  // Quita el material de SDA o sesiones borradas y las listas vacías.
+  function prune(c){
+    if(!c?.resources?.items)return c;
+    const valid=owners(c);
+    for(const [owner,l] of Object.entries(c.resources.items))if(!valid.has(owner)||!l.length)delete c.resources.items[owner];
+    return c;
+  }
+  // Al duplicar una materia cambian los identificadores de SDA y sesiones.
+  function remap(resources,maps){
+    if(!resources)return resources;
+    const out={...(resources.base!==undefined?{base:resources.base}:{}),items:{}};
+    for(const [owner,l] of Object.entries(resources.items||{})){
+      const target=owner==='course'?owner:maps.reduce((found,map)=>found||map.get(owner),'');
+      if(target)out.items[target]=l.map(item=>({...item}));
+    }
+    return out;
+  }
+  // Nombre a mostrar: el puesto por el docente o, si no hay, el final de la ruta/URL.
+  function displayName(item){
+    if(item.label&&item.label.trim())return item.label.trim();
+    if(item.kind==='note')return item.target.trim().split('\n')[0].slice(0,80);
+    if(item.kind==='url'){try{const u=new URL(item.target);return u.hostname.replace(/^www\./,'')+(u.pathname.length>1?u.pathname:'')}catch{return item.target}}
+    return String(item.target).split(/[\\/]/).filter(Boolean).pop()||item.target;
+  }
+  const EXT_GROUPS={presentation:['ppt','pptx','pps','ppsx','odp','key'],pdf:['pdf'],document:['doc','docx','odt','rtf','txt','md','pages'],sheet:['xls','xlsx','ods','csv','numbers'],image:['png','jpg','jpeg','gif','webp','svg'],video:['mp4','mov','avi','mkv','webm'],audio:['mp3','wav','ogg','m4a']};
+  function extension(target){const m=String(target).match(/\.([a-z0-9]{1,5})$/i);return m?m[1].toLowerCase():''}
+  // Tipo visual para el icono: presentación, PDF, documento… o el dominio conocido de un enlace.
+  function flavor(item){
+    if(item.kind==='folder')return 'folder';
+    if(item.kind==='note')return 'note';
+    if(item.kind==='url'){
+      const h=(()=>{try{return new URL(item.target).hostname}catch{return ''}})();
+      if(/canva\./i.test(h))return 'canva';if(/genial\.ly|genially/i.test(h))return 'genially';
+      if(/youtube\.|youtu\.be|vimeo\./i.test(h))return 'video';
+      if(/docs\.google|drive\.google|onedrive|sharepoint|1drv\.ms|dropbox/i.test(h))return 'cloud';
+      if(/aules|moodle/i.test(h))return 'aules';
+      return 'web';
+    }
+    const ext=extension(item.target);
+    for(const [group,list] of Object.entries(EXT_GROUPS))if(list.includes(ext))return group;
+    return 'file';
+  }
+  // Une la carpeta base y una ruta relativa respetando el separador de la base.
+  function join(base,target){
+    if(!target||isAbsolute(target)||!base)return target;
+    const sep=base.includes('\\')&&!base.includes('/')?'\\':'/';
+    return base.replace(/[\\/]+$/,'')+sep+String(target).replace(/^[\\/]+/,'').split(/[\\/]/).join(sep);
+  }
+  // Ruta relativa a la base si está dentro de ella (sin distinguir mayúsculas en Windows); si no, la absoluta.
+  function relativize(base,absolute){
+    if(!base||!absolute)return absolute;
+    const norm=s=>s.replace(/\\/g,'/').replace(/\/+$/,'');
+    const b=norm(base),a=norm(absolute),windows=/^[a-zA-Z]:\//.test(b);
+    const same=windows?a.toLowerCase().startsWith(b.toLowerCase()+'/'):a.startsWith(b+'/');
+    return same?a.slice(b.length+1):absolute;
+  }
+  function newId(){return 'res-'+(typeof crypto==='object'&&crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2))}
+  /* Vinculación automática a partir de la carpeta base de la materia.
+     listing = [{name: carpeta, files: [nombres]}]. Cada carpeta se asigna a la SDA con su mismo número
+     («SDA 3…», «U3.…», «3.- …»); dentro, «05. Sesión 5.pptx» va a la sesión 5, «01-02. Sesiones 1 y 2» a la 1 y la 2,
+     y «00. Introducción» a la SDA. Prefiere presentación, luego PDF. Nunca sustituye material ya vinculado. */
+  const SKIP_FOLDERS=/archivador|antiguas|examen|exámenes|correcci|informe|^_/i;
+  const PREFERENCE=['pptx','ppt','ppsx','pps','odp','key','pdf'];
+  function folderNumber(name){const m=String(name).normalize('NFC').match(/^\s*(?:sda|sa|u|ud|unidad|tema|bloque|proyecto)?\s*0*(\d{1,3})(?!\d)/i);return m?Number(m[1]):null}
+  function blockNumber(c,sd,index){const n=folderNumber(sd.title||'');return /^\s*(?:sda|sa|u|ud|unidad|tema|bloque|proyecto)\s*\d/i.test(sd.title||'')&&n!==null?n:index+1}
+  function sessionNumbers(file){
+    const name=String(file).normalize('NFC').replace(/\.[^.]+$/,'');
+    if(/^\s*0*0\s*[.\-_ ]+\s*intro/i.test(name))return {intro:true,numbers:[]};
+    const range=name.match(/^\s*0*(\d{1,3})\s*-\s*0*(\d{1,3})\s*[.\s]/);
+    if(range){const a=Number(range[1]),b=Number(range[2]);if(b>=a&&b-a<10)return {numbers:Array.from({length:b-a+1},(_,i)=>a+i)}}
+    const single=name.match(/^\s*0*(\d{1,3})\s*[.,_\-]+\s*sesi[oó]n\s*0*(\d{1,3})?\s*$/i);
+    if(single){const n=Number(single[1]);if(single[2]!==undefined&&Number(single[2])!==n)return null;return {numbers:[n]}}
+    return null;
+  }
+  function pick(files){return [...files].sort((a,b)=>{const ia=PREFERENCE.indexOf(extension(a)),ib=PREFERENCE.indexOf(extension(b));return (ia<0?99:ia)-(ib<0?99:ib)})[0]}
+  function proposeLinks(c,listing){
+    const proposals=[],warnings=[];
+    const folders=(listing||[]).filter(f=>f&&typeof f.name==='string'&&!SKIP_FOLDERS.test(f.name));
+    const byNumber=new Map();folders.forEach(f=>{const n=folderNumber(f.name);if(n===null)return;if(!byNumber.has(n))byNumber.set(n,[]);byNumber.get(n).push(f)});
+    (c.sdas||[]).forEach((sd,index)=>{
+      const n=blockNumber(c,sd,index),candidates=byNumber.get(n)||[];
+      const block={blockId:sd.id,title:sd.title,number:n,folder:null,items:[]};
+      if(!candidates.length){warnings.push({blockId:sd.id,message:'No hay ninguna carpeta con el número '+n+'.'});proposals.push(block);return}
+      if(candidates.length>1){warnings.push({blockId:sd.id,message:'Hay varias carpetas con el número '+n+': '+candidates.map(f=>f.name).join(', ')+'.'});proposals.push(block);return}
+      const folder=candidates[0];block.folder=folder.name;
+      const usable=(folder.files||[]).filter(f=>PREFERENCE.includes(extension(f)));
+      const groups=new Map(),add=(key,file)=>{if(!groups.has(key))groups.set(key,[]);groups.get(key).push(file)};
+      usable.forEach(f=>{const s=sessionNumbers(f);if(!s)return;if(s.intro)add('intro',f);else add(s.numbers.join('-'),f)});
+      if(!list(c,sd.id).length){
+        block.items.push({owner:sd.id,item:{kind:'folder',label:'Carpeta de la '+(/^\s*u/i.test(folder.name)?'unidad':'SDA'),target:folder.name}});
+        if(groups.has('intro'))block.items.push({owner:sd.id,item:{kind:'file',label:'Introducción',target:folder.name+'/'+pick(groups.get('intro')),primary:true}});
+      }
+      const sessions=sd.sessions||[];
+      for(const [key,files] of groups){
+        if(key==='intro')continue;
+        const numbers=key.split('-').map(Number),file=pick(files);
+        numbers.forEach(num=>{
+          const se=sessions.find(x=>Number(x.num)===num)||(sessions.some(x=>x.num!==undefined&&x.num!==''&&x.num!==null)?null:sessions[num-1]);
+          if(!se){warnings.push({blockId:sd.id,message:'«'+file+'»: no hay sesión '+num+'.'});return}
+          if(list(c,se.id).length)return;
+          block.items.push({owner:se.id,item:{kind:'file',label:numbers.length>1?'Presentación (sesiones '+numbers.join(' y ')+')':'Presentación',target:folder.name+'/'+file,primary:true}});
+        });
+      }
+      proposals.push(block);
+    });
+    return {proposals,warnings};
+  }
+  // Aplica las propuestas aceptadas (lista de blockId) sobre una copia de la materia.
+  function applyLinks(c,proposals,accepted){
+    const ok=new Set(accepted);c.resources=c.resources||blank();
+    proposals.filter(p=>ok.has(p.blockId)).forEach(p=>p.items.forEach(({owner,item})=>{
+      const l=c.resources.items[owner]||(c.resources.items[owner]=[]);
+      if(l.length>=LIMITS.items)return;
+      if(item.primary&&l.some(x=>x.primary))item={...item,primary:false};
+      l.push({id:newId(),...item});
+    }));
+    return c;
+  }
+  return {KINDS,KIND_LABELS,LIMITS,validate,validateItem,blank,list,count,primary,owners,prune,remap,displayName,flavor,extension,join,relativize,isUrl,isAbsolute,newId,folderNumber,sessionNumbers,proposeLinks,applyLinks};
+});
+</script>
 <script>/* calendar-ui.js */
 /* Calendario de la programación: interfaz. Las fechas de las sesiones se calculan con CalendarModel. */
 const CALENDAR_MONTHS=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
@@ -1160,13 +1333,14 @@ function renderCalendario(c){
  const status=p.sessions.some(s=>s.unplaced)?`<div class="notice dangerbox">No caben todas las sesiones: ${p.sessions.filter(s=>s.unplaced).length} se quedan sin clase antes del último día de clase del grupo (${calendarDate(c.calendar.end)}).</div>`:
   p.late?`<div class="notice warn">La programación terminaría el <strong>${calendarDate(p.lastDate)}</strong>, después del límite (${calendarDate(p.limit)}): te faltan ${-p.margin} ${-p.margin===1?'clase':'clases'} o debes ajustar sesiones.</div>`:
   `<div class="notice">Vas en tiempo: la programación termina el <strong>${calendarDate(p.lastDate)}</strong>, ${p.margin} ${p.margin===1?'clase':'clases'} antes del límite (${calendarDate(p.limit)}).</div>`;
- shell(`<section class="calendar"><div class="section-head"><h1>Calendario de la programación</h1><div class="toolbar"><button class="btn" onclick="openCalendarSetup()">Configurar grupo</button><button class="btn" onclick="openSchoolCalendar()">Calendario del centro</button></div></div>
+ shell(`<section class="calendar"><div class="section-head"><h1>Calendario de la programación</h1><div class="toolbar"><button class="btn" onclick="openResourcesEditor('course')">Material de la materia</button><button class="btn" onclick="openCalendarSetup()">Configurar grupo</button><button class="btn" onclick="openSchoolCalendar()">Calendario del centro</button></div></div>
  <div class="grid metrics calendar-metrics"><div class="card metric"><strong>${p.capacity}</strong><span>Clases hasta el límite (${calendarDate(p.limit)})</span></div><div class="card metric"><strong>${p.needed}</strong><span>Clases que necesita la programación</span></div><div class="card metric ${p.margin<0?'is-late':''}"><strong>${p.margin>0?'+':''}${p.margin}</strong><span>Margen</span></div><div class="card metric"><strong>${calendarDate(p.lastDate)}</strong><span>Fin previsto de las sesiones</span></div><div class="card metric ${p.pending.length?'is-pending':''}"><strong>${p.pending.length}</strong><span>Sesiones pasadas por confirmar</span></div></div>
  ${status}${p.conflicts.map(x=>{const s=p.sessions.find(y=>y.sessionId===x.sessionId);return `<div class="notice warn">${x.fixed?'Fecha fija':'Sesión fijada'} el ${calendarDate(x.date)}${s?' ('+esc(calendarSessionName(c,s))+')':''}: ${esc(x.reason)}.</div>`}).join('')}
- ${next?`<p class="calendar-next">${next.dates.includes(today)?'Hoy':'Próxima clase, '+esc(calendarDate(next.dates.find(d=>d>=today),true))}: <strong>${esc(calendarSessionName(c,next))}</strong></p>`:''}
+ ${next?resourceTodayHtml(c,next,today):''}
  ${p.pending.length?`<div class="card calendar-pending"><div class="section-head"><h2>¿Qué se hizo en estas clases?</h2><button class="btn" onclick="calendarConfirmAll()">Marcar todas como hechas</button></div><ul>${p.pending.map(s=>`<li><span><b>${esc(calendarDate(s.dates[0]))}</b> · ${esc(calendarSessionName(c,s))}</span><span class="toolbar"><button class="btn small primary" onclick="calendarSetStatus(${jsArg(s.sessionId)},'done')">Hecha</button><button class="btn small" onclick="calendarSetStatus(${jsArg(s.sessionId)},'partial')">Parcial</button><button class="btn small" onclick="calendarToggleLost(${jsArg(s.dates[0])},true)">No hubo clase</button></span></li>`).join('')}</ul><p class="tiny muted">«No hubo clase» retrasa una clase todas las sesiones siguientes. «Parcial» hace que la sesión continúe en la clase siguiente.</p></div>`:''}
  <h2>Curso completo</h2>${calendarLegend()}<div class="calendar-year">${calendarMonths(c,school,p,today)}</div>
- <h2>Sesiones por ${esc(levelName(c,0).toLowerCase())}</h2><p class="muted">Seguimiento y notas para revisar la programación el próximo curso.</p>${calendarBlocks(c,p)}</section>`);
+ <h2>Sesiones por ${esc(levelName(c,0).toLowerCase())}</h2><p class="muted">Seguimiento, notas para revisar la programación el próximo curso y material de cada sesión.</p>${calendarBlocks(c,p)}</section>`);
+ if(next)resourceCheck(c,[next.sessionId,next.blockId]);
 }
 function calendarLegend(){return `<div class="calendar-legend">${[['planned','Sesión prevista'],['done','Hecha'],['partial','Parcial'],['pending','Por confirmar'],['lost','Sin clase (retrasa)'],['other','Otra actividad (retrasa)'],['free','Clase libre'],['reserve','Margen final'],['closed','No lectivo']].map(([k,t])=>`<span><i class="cal-dot ${k}"></i>${t}</span>`).join('')}</div>`}
 function calendarMonths(c,school,p,today){
@@ -1188,7 +1362,7 @@ function calendarMonths(c,school,p,today){
 function calendarBlocks(c,p){
  return c.sdas.map(sd=>{const list=p.sessions.filter(s=>s.blockId===sd.id),count=k=>list.filter(s=>s.status===k).length;
   return `<details class="card calendar-block"><summary><b>${esc(calendarBlockName(c,sd.id))}</b> <span class="muted">· ${list.length} sesiones · ${count('done')} hechas · ${count('partial')} parciales · ${count('dropped')} suprimidas${list.some(s=>s.dates.length)?` · ${calendarDate(list.flatMap(s=>s.dates).sort()[0])} → ${calendarDate(list.flatMap(s=>s.dates).sort().at(-1))}`:''}</span></summary>
-  <ul>${list.map(s=>`<li class="${s.beyondLimit?'beyond':''}"><span class="cal-dot ${s.status||'planned'}"></span><span class="grow"><b>${s.dates.length?esc(s.dates.map(d=>calendarDate(d)).join(' y ')):s.status==='dropped'?'Suprimida':'Sin clase disponible'}</b> · ${esc(calendarSessionName(c,s))}${s.fixed?' <span class="pill" title="Fecha fija: fuera del orden de la programación">Fecha fija</span>':s.anchor?' <span class="pill">Fijada</span>':''}${s.note?`<div class="tiny muted">Nota: ${esc(s.note)}</div>`:''}</span><button class="btn small" onclick="openCalendarSession(${jsArg(s.sessionId)})">Opciones</button></li>`).join('')||'<li class="muted">Sin sesiones.</li>'}</ul></details>`}).join('');
+  <div class="toolbar">${resourceButton(c,sd.id,'Material de '+(String(levelName(c,0)).split('/')[0].trim()||'la SDA'))}</div><ul>${list.map(s=>`<li class="${s.beyondLimit?'beyond':''}"><span class="cal-dot ${s.status||'planned'}"></span><span class="grow"><b>${s.dates.length?esc(s.dates.map(d=>calendarDate(d)).join(' y ')):s.status==='dropped'?'Suprimida':'Sin clase disponible'}</b> · ${esc(calendarSessionName(c,s))}${s.fixed?' <span class="pill" title="Fecha fija: fuera del orden de la programación">Fecha fija</span>':s.anchor?' <span class="pill">Fijada</span>':''}${s.note?`<div class="tiny muted">Nota: ${esc(s.note)}</div>`:''}</span>${resourceButton(c,s.sessionId)}<button class="btn small" onclick="openCalendarSession(${jsArg(s.sessionId)})">Opciones</button></li>`).join('')||'<li class="muted">Sin sesiones.</li>'}</ul></details>`}).join('');
 }
 function renderCalendarSetup(c,school,inModal=false){
  const cal=c.calendar||{weekdays:[],end:school.end,reserveDays:14};
@@ -1253,27 +1427,46 @@ function calendarToggleDouble(day,on){return calendarChange(c=>{const list=c.cal
 function calendarSetFixed(sessionId,day){return calendarChange(c=>{const m=String(day||'').match(/^(\d{4})-(\d{2})-(\d{2})$/);for(const sd of c.sdas)for(const se of sd.sessions)if(se.id===sessionId)se.date=m?`${m[3]}/${m[2]}/${m[1]}`:'';c.calendar.anchors=c.calendar.anchors.filter(a=>a.sessionId!==sessionId)},day?'mover sesión a una fecha fija':'quitar fecha fija')}
 function calendarToggleAnchor(sessionId,day){return calendarChange(c=>{const list=c.calendar.anchors.filter(a=>a.sessionId!==sessionId);if(day)list.push({sessionId,date:day});c.calendar.anchors=list},day?'fijar sesión':'quitar fecha fija')}
 async function calendarSaveNote(sessionId){const note=document.getElementById('calendarNote-'+sessionId).value.trim().slice(0,2000),comment=(document.getElementById('calendarComment-'+sessionId)?.value||'').trim().slice(0,2000);const result=await calendarChange(c=>{const t={...(c.calendar.tracking[sessionId]||{})};if(note)t.note=note;else delete t.note;if(comment)t.comment=comment;else delete t.comment;t.updatedAt=new Date().toISOString();if(t.status||t.note||t.comment)c.calendar.tracking[sessionId]=t;else delete c.calendar.tracking[sessionId]},'comentarios y nota de la sesión');if(result.ok)closeModal();return result}
-function calendarSessionActions(c,s,day=''){
- return `<article class="calendar-session"><h3>${esc(calendarSessionName(c,s))}</h3><p class="tiny muted">${s.dates.length?'Prevista: '+esc(s.dates.map(d=>calendarDate(d,true)).join(' y ')):'Sin clase asignada'}${s.fixed?' · fecha fija (fuera del orden de la programación)':s.anchor?` · fijada el ${calendarDate(s.anchor)}`:''}</p>
- <div class="toolbar" role="group" aria-label="Estado de la sesión">${[['done','Hecha'],['partial','Parcial'],['dropped','Suprimida'],['','Sin marcar']].map(([k,t])=>`<button class="btn small ${s.status===k?'primary':''}" aria-pressed="${s.status===k}" onclick="closeModal();calendarSetStatus(${jsArg(s.sessionId)},${jsArg(k)})">${t}</button>`).join('')}</div>
- <div class="toolbar">${s.fixed?`<button class="btn small" onclick="closeModal();calendarSetFixed(${jsArg(s.sessionId)},'')">Quitar fecha fija (vuelve a su orden)</button>`:s.anchor?`<button class="btn small" onclick="closeModal();calendarToggleAnchor(${jsArg(s.sessionId)},'')">Quitar fecha fija</button>`:day?`<button class="btn small" onclick="closeModal();calendarToggleAnchor(${jsArg(s.sessionId)},${jsArg(day)})">Fijar en esta fecha</button>`:''}</div>
- <div class="toolbar calendar-move"><label>Mover a otro día (fecha fija)<input type="date" id="calendarMove-${esc(s.sessionId)}" value="${esc(s.fixed)}"></label><button class="btn small" onclick="const v=document.getElementById('calendarMove-'+${jsArg(s.sessionId)}).value;if(!v){alert('Elige una fecha.');return}closeModal();calendarSetFixed(${jsArg(s.sessionId)},v)">Mover</button></div>
- <label>Comentarios de la sesión <span class="tiny muted">(qué hacer, puntualizaciones, recordatorios)</span><textarea id="calendarComment-${esc(s.sessionId)}" rows="3" maxlength="2000">${esc(s.comment)}</textarea></label>
- <label>Nota para la revisión del próximo curso<textarea id="calendarNote-${esc(s.sessionId)}" rows="3" maxlength="2000">${esc(s.note)}</textarea></label><div class="toolbar"><button class="btn primary" onclick="calendarSaveNote(${jsArg(s.sessionId)})">Guardar</button><button class="btn" onclick="closeModal()">Cerrar</button></div></article>`;
+// Ficha de una sesión, por apartados: material, cómo fue la clase, notas y cambio de día (plegado).
+// dayHtml: acciones del día (no hubo clase / otra actividad) que se muestran junto al estado.
+function calendarSessionActions(c,s,day='',dayHtml=''){
+ const status=s.status?CalendarModel.STATUS_LABELS[s.status].replace(/ \(.*/,''):'Sin marcar';
+ const when=s.dates.length?'Prevista: '+s.dates.map(d=>calendarDate(d,true)).join(' y '):'Sin clase asignada';
+ const fixedInfo=s.fixed?' · fecha fija (fuera del orden de la programación)':s.anchor?` · fijada el ${calendarDate(s.anchor)}`:'';
+ return `<article class="calendar-session cal-sheet">
+ <header class="cal-sheet-head"><p class="res-kicker">${esc(calendarBlockName(c,s.blockId))}</p><h3>${esc(`${c.structure?levelName(c,1)+' ':'S'}${s.num}${s.title?' · '+s.title:''}`)}</h3>
+ <p class="res-kicker">${esc(when)}${esc(fixedInfo)} · <span class="cal-chip ${esc(s.status||'none')}">${esc(status)}</span></p></header>
+ <section class="cal-sec">${resourceSessionSection(c,s.sessionId)}</section>
+ <section class="cal-sec"><h4>¿Cómo fue la clase?</h4>
+  <p class="tiny muted">Se dio la sesión:</p>
+  <div class="toolbar" role="group" aria-label="Estado de la sesión">${[['done','Hecha'],['partial','Parcial'],['dropped','Suprimida'],['','Sin marcar']].map(([k,t])=>`<button class="btn small ${s.status===k||(!s.status&&!k)?'primary':''}" aria-pressed="${s.status===k}" onclick="closeModal();calendarSetStatus(${jsArg(s.sessionId)},${jsArg(k)})">${t}</button>`).join('')}</div>
+  ${dayHtml}</section>
+ <section class="cal-sec"><h4>Notas</h4>
+  <label>Comentarios de la sesión <span class="tiny muted">(qué hacer, puntualizaciones, recordatorios)</span><textarea id="calendarComment-${esc(s.sessionId)}" rows="2" maxlength="2000">${esc(s.comment)}</textarea></label>
+  <label>Nota para la revisión del próximo curso<textarea id="calendarNote-${esc(s.sessionId)}" rows="2" maxlength="2000">${esc(s.note)}</textarea></label>
+  <div class="toolbar"><button class="btn primary" onclick="calendarSaveNote(${jsArg(s.sessionId)})">Guardar</button></div></section>
+ <details class="cal-sec cal-more"><summary>Cambiar la fecha de esta sesión</summary>
+  <div class="toolbar">${s.fixed?`<button class="btn small" onclick="closeModal();calendarSetFixed(${jsArg(s.sessionId)},'')">Quitar fecha fija (vuelve a su orden)</button>`:s.anchor?`<button class="btn small" onclick="closeModal();calendarToggleAnchor(${jsArg(s.sessionId)},'')">Quitar fecha fija</button>`:day?`<button class="btn small" onclick="closeModal();calendarToggleAnchor(${jsArg(s.sessionId)},${jsArg(day)})">Fijar en esta fecha</button>`:''}</div>
+  <div class="toolbar calendar-move"><label>Mover a otro día (fecha fija)<input type="date" id="calendarMove-${esc(s.sessionId)}" value="${esc(s.fixed)}"></label><button class="btn small" onclick="const v=document.getElementById('calendarMove-'+${jsArg(s.sessionId)}).value;if(!v){alert('Elige una fecha.');return}closeModal();calendarSetFixed(${jsArg(s.sessionId)},v)">Mover</button></div></details>
+ </article>`;
 }
-function openCalendarSession(sessionId){const c=course(),s=calendarPlanNow().sessions.find(x=>x.sessionId===sessionId);if(s)openModal(`<h2>Sesión</h2>${calendarSessionActions(c,s)}`)}
+function calendarModalFooter(){return '<div class="toolbar cal-foot"><button class="btn" onclick="closeModal()">Cerrar</button></div>'}
+function openCalendarSession(sessionId){const c=course(),s=calendarPlanNow().sessions.find(x=>x.sessionId===sessionId);if(s)openModal(`${calendarSessionActions(c,s)}${calendarModalFooter()}`)}
 function openCalendarDay(day){
  const c=course(),p=calendarPlanNow(),list=p.sessions.filter(s=>s.dates.includes(day)),lost=p.lost.find(x=>x.date===day),double=p.doubles.includes(day);
- openModal(`<h2>${esc(calendarDate(day,true))}</h2>
- ${lost?(lost.kind==='other'?`<p class="notice warn">Clase dedicada a otra actividad${lost.reason?': '+esc(lost.reason):''}. Las sesiones se han retrasado una clase.</p><div class="toolbar"><button class="btn primary" onclick="closeModal();calendarToggleLost(${jsArg(day)},false)">Se dio la sesión prevista (adelantar)</button><button class="btn" onclick="closeModal();calendarSetLostKind(${jsArg(day)},'')">Cambiar a «No hubo clase»</button><button class="btn" onclick="closeModal()">Cerrar</button></div>`:`<p class="notice warn">Marcado sin clase${lost.reason?': '+esc(lost.reason):''}. Las sesiones se han retrasado una clase.</p><div class="toolbar"><button class="btn primary" onclick="closeModal();calendarToggleLost(${jsArg(day)},false)">Sí hubo clase (adelantar)</button><button class="btn" onclick="closeModal();calendarSetLostKind(${jsArg(day)},'other')">Cambiar a «Clase dedicada a otra actividad»</button><button class="btn" onclick="closeModal()">Cerrar</button></div>`):
- `<div class="toolbar"><label>Motivo (opcional)<input type="text" id="calendarLostReason" maxlength="200" placeholder="Excursión, huelga, corrección del examen…"></label><button class="btn" onclick="const r=document.getElementById('calendarLostReason').value.trim();closeModal();calendarToggleLost(${jsArg(day)},true,r)">No hubo clase este día (retrasar)</button><button class="btn" title="Hubo clase, pero no se dio la sesión prevista (corrección, repaso, imprevisto). Indica en Motivo a qué se dedicó." onclick="const r=document.getElementById('calendarLostReason').value.trim();closeModal();calendarToggleLost(${jsArg(day)},true,r,'other')">Clase dedicada a otra actividad (retrasar)</button><button class="btn" onclick="closeModal();calendarToggleDouble(${jsArg(day)},${!double})">${double?'Quitar la segunda sesión de este día':'Este día se dieron dos sesiones (adelantar)'}</button></div>
- ${list.map(s=>calendarSessionActions(c,s,day)).join('')||'<p class="muted">No hay ninguna sesión prevista en esta clase.</p><div class="toolbar"><button class="btn" onclick="closeModal()">Cerrar</button></div>'}
- ${calendarMoveHere(c,p,day)}`}`);
+ if(lost){openModal(`<h2>${esc(calendarDate(day,true))}</h2>${lost.kind==='other'?`<p class="notice warn">Clase dedicada a otra actividad${lost.reason?': '+esc(lost.reason):''}. Las sesiones se han retrasado una clase.</p><div class="toolbar"><button class="btn primary" onclick="closeModal();calendarToggleLost(${jsArg(day)},false)">Se dio la sesión prevista (adelantar)</button><button class="btn" onclick="closeModal();calendarSetLostKind(${jsArg(day)},'')">Cambiar a «No hubo clase»</button><button class="btn" onclick="closeModal()">Cerrar</button></div>`:`<p class="notice warn">Marcado sin clase${lost.reason?': '+esc(lost.reason):''}. Las sesiones se han retrasado una clase.</p><div class="toolbar"><button class="btn primary" onclick="closeModal();calendarToggleLost(${jsArg(day)},false)">Sí hubo clase (adelantar)</button><button class="btn" onclick="closeModal();calendarSetLostKind(${jsArg(day)},'other')">Cambiar a «Clase dedicada a otra actividad»</button><button class="btn" onclick="closeModal()">Cerrar</button></div>`}`);return}
+ const notGiven=`<p class="tiny muted">No se dio la sesión prevista <span class="muted">(retrasa una clase todas las siguientes)</span>:</p>
+  <div class="toolbar cal-lost"><label>Motivo (opcional)<input type="text" id="calendarLostReason" maxlength="200" placeholder="Excursión, huelga, corrección del examen…"></label><button class="btn" onclick="const r=document.getElementById('calendarLostReason').value.trim();closeModal();calendarToggleLost(${jsArg(day)},true,r)">No hubo clase este día (retrasar)</button><button class="btn" title="Hubo clase, pero no se dio la sesión prevista (corrección, repaso, imprevisto). Indica en Motivo a qué se dedicó." onclick="const r=document.getElementById('calendarLostReason').value.trim();closeModal();calendarToggleLost(${jsArg(day)},true,r,'other')">Clase dedicada a otra actividad (retrasar)</button></div>`;
+ const dayMore=`<details class="cal-sec cal-more"><summary>Más opciones de este día</summary><div class="toolbar"><button class="btn small" onclick="closeModal();calendarToggleDouble(${jsArg(day)},${!double})">${double?'Quitar la segunda sesión de este día':'Este día se dieron dos sesiones (adelantar)'}</button></div>${calendarMoveHere(c,p,day)}</details>`;
+ openModal(`<p class="cal-day-title">${esc(calendarDate(day,true))}</p>
+ ${list.length?list.map((s,i)=>calendarSessionActions(c,s,day,i===0?notGiven:'')).join(''):`<p class="muted">No hay ninguna sesión prevista en esta clase.</p><section class="cal-sec">${notGiven}</section>`}
+ ${dayMore}${calendarModalFooter()}`);
+ resourceCheck(c,list.map(s=>s.sessionId));
 }
 function calendarMoveHere(c,p,day){
  const options=c.sdas.map(sd=>{const items=p.sessions.filter(s=>s.blockId===sd.id&&s.status!=='dropped'&&!s.dates.includes(day));return items.length?`<optgroup label="${esc(calendarBlockName(c,sd.id))}">${items.map(s=>`<option value="${esc(s.sessionId)}">${esc(calendarSessionName(c,s))}${s.dates.length?' · ahora '+esc(calendarDate(s.dates[0])):''}</option>`).join('')}</optgroup>`:''}).join('');
  if(!options)return '';
- return `<details class="calendar-move-here"><summary>Poner otra sesión en este día (fecha fija)</summary><p class="tiny muted">La sesión elegida se queda en este día, fuera del orden de la programación (útil para salidas, concursos o actividades sueltas). Las demás sesiones se reorganizan alrededor. Es la misma fecha que puedes escribir en Estructura.</p><div class="toolbar"><select id="calendarMoveSelect">${options}</select><button class="btn primary" onclick="const v=document.getElementById('calendarMoveSelect').value;closeModal();calendarSetFixed(v,${jsArg(day)})">Poner en este día</button></div></details>`;
+ return `<div class="calendar-move-here"><p class="tiny"><b>Poner otra sesión en este día (fecha fija)</b></p><p class="tiny muted">La sesión elegida se queda en este día, fuera del orden de la programación (útil para salidas, concursos o actividades sueltas). Las demás sesiones se reorganizan alrededor. Es la misma fecha que puedes escribir en Estructura.</p><div class="toolbar"><select id="calendarMoveSelect">${options}</select><button class="btn primary" onclick="const v=document.getElementById('calendarMoveSelect').value;closeModal();calendarSetFixed(v,${jsArg(day)})">Poner en este día</button></div></div>`;
 }
 /* Seguimiento de la programación: solo consulta. Los datos salen del calendario (estados, notas y días sin clase). */
 const FOLLOWUP_PERIODS=new Map(); // periodo elegido por materia; no se guarda en los datos
@@ -1326,7 +1519,266 @@ function renderFollowUp(c){
 async function followUpCopy(text,message){const el=document.getElementById('followUpStatus');try{await navigator.clipboard.writeText(text);if(el)el.textContent=message;return {ok:true}}catch(e){if(el)el.textContent='No se ha podido copiar: '+e.message;return {ok:false,error:e.message}}}
 function copyFollowUpText(){return followUpCopy(document.getElementById('followUpText').value,'Texto copiado.')}
 function copyFollowUpForAi(){const c=course();return followUpCopy(CalendarModel.followUpForAi(followUpReport(c),followUpNames(c)),'Datos copiados. Pégalos en la IA que elijas; la app no envía datos.')}
-
+</script>
+<script>/* resources-ui.js */
+/* Material de la materia, de cada SDA y de cada sesión: interfaz. Datos y reglas en ResourceModel.
+   Escritorio: abre archivos y carpetas con el programa del sistema y enlaces web en el navegador.
+   Sin desktopAPI (versión web) solo se pueden abrir enlaces web y notas. */
+(function(){const css=`.res-ico{width:22px;height:22px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.res-f-presentation{color:#d85a30}.res-f-pdf{color:#a32d2d}.res-f-document{color:#185fa5}.res-f-sheet{color:#3b6d11}.res-f-folder{color:#ba7517}
+.res-f-video{color:#e24b4a}.res-f-canva,.res-f-genially{color:#534ab7}.res-f-cloud{color:#378add}.res-f-aules{color:#0f6e56}.res-f-note{color:#3b6d11}.res-f-web,.res-f-file,.res-f-image,.res-f-audio{color:#5f5e5a}
+.res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:.5rem;margin:.4rem 0}
+.res-tile{display:flex;flex-direction:column;align-items:flex-start;gap:.15rem;text-align:left;padding:.65rem .75rem;border:1px solid var(--line,#dcdfe4);border-radius:10px;background:var(--card,#fff);cursor:pointer;font:inherit;color:inherit;min-height:4.6rem}
+.res-tile:hover{border-color:var(--accent,#2f6fb3);background:#f7f9fc}.res-tile:focus-visible{outline:2px solid var(--accent,#2f6fb3);outline-offset:2px}
+.res-tile.primary{border:2px solid var(--accent,#2f6fb3)}.res-tile.note{background:#f6f9f2;cursor:default}.res-tile.missing,.res-row.missing{border-color:#c0392b;background:#fdf1ef}
+.res-tile .res-title{font-weight:600;font-size:.88rem;line-height:1.25;word-break:break-word}.res-sub{font-size:.74rem;color:var(--muted,#6b7280);word-break:break-word}
+.res-pill{font-size:.68rem;font-weight:600;padding:.05rem .4rem;border-radius:6px;background:#e6f1fb;color:#0c447c;margin-left:.3rem;vertical-align:1px}
+.res-missing{font-size:.74rem;color:#a12a1b}
+.res-rows{list-style:none;margin:.4rem 0;padding:0;display:grid;gap:.35rem}
+.res-row{display:flex;align-items:center;gap:.6rem;padding:.45rem .6rem;border:1px solid var(--line,#dcdfe4);border-radius:10px;background:var(--card,#fff)}
+.res-row .res-main{flex:1;min-width:0}.res-row .res-title{font-weight:600;font-size:.92rem}.res-row .res-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.res-menu{position:relative}.res-menu>summary{list-style:none;cursor:pointer;padding:.2rem .55rem;border:1px solid var(--line,#dcdfe4);border-radius:8px;font-weight:700;line-height:1.2;background:#fff}
+.res-menu>summary::-webkit-details-marker{display:none}.res-menu[open]>summary{background:#eef3fa}
+.res-menu .res-menu-box{position:absolute;right:0;top:calc(100% + 4px);z-index:30;background:#fff;border:1px solid var(--line,#dcdfe4);border-radius:10px;padding:.5rem;box-shadow:0 8px 24px rgba(0,0,0,.12);display:grid;gap:.35rem;min-width:15rem}
+.res-menu .res-menu-box .btn{justify-content:flex-start;text-align:left}.res-menu label{font-size:.8rem}
+.res-today{border-left:4px solid var(--accent,#2f6fb3)}.res-today-head{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;flex-wrap:wrap}
+.res-today-head h2{margin:.1rem 0 0;font-size:1.15rem}.res-kicker{font-size:.8rem;color:var(--muted,#6b7280);margin:0}
+.res-project{font-size:1rem;padding:.6rem 1.1rem;display:inline-flex;align-items:center;gap:.45rem}.res-project .res-ico{stroke:#fff}
+.res-foot{display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin-top:.4rem;font-size:.85rem}.res-foot summary{cursor:pointer}
+.res-linkbtn{background:none;border:none;padding:0;color:var(--accent,#2f6fb3);cursor:pointer;font:inherit;display:inline-flex;align-items:center;gap:.3rem}
+.res-add{display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:.6rem;margin-top:.8rem}.res-add fieldset{border:1px solid var(--line,#dcdfe4);border-radius:10px;padding:.5rem .75rem;margin:0}
+.res-add fieldset label{display:block;margin-bottom:.35rem}.res-add input,.res-add textarea{width:100%;box-sizing:border-box}
+.res-basebox{border:1px solid #fac775;background:#faeeda;border-radius:10px;padding:.6rem .8rem;margin:.4rem 0 .8rem}
+.res-count{font-size:.75rem}.res-proposal{margin:.25rem 0 .75rem}
+.cal-day-title{font-size:1.25rem;font-weight:700;margin:0 0 .5rem}.cal-sheet{display:grid;gap:.6rem;margin-bottom:.8rem}
+.cal-sheet-head h3{margin:.1rem 0;font-size:1.15rem}.cal-sec{border:1px solid var(--line,#dcdfe4);border-radius:12px;padding:.7rem .9rem;background:var(--card,#fff)}
+.cal-sec h4{margin:0 0 .45rem;font-size:.95rem}.cal-sec .res-session h4{margin-top:0}.cal-sec label{display:block;margin-bottom:.45rem}.cal-sec textarea{width:100%;box-sizing:border-box}
+.cal-sec p.tiny{margin:.3rem 0 .25rem}.cal-more>summary{cursor:pointer;font-weight:600;font-size:.9rem}.cal-more[open]>summary{margin-bottom:.5rem}
+.cal-lost label{display:flex;align-items:center;gap:.4rem;margin:0}.cal-chip{font-size:.72rem;font-weight:600;padding:.05rem .45rem;border-radius:6px;background:#eef1f5;color:#444}
+.cal-chip.done{background:#eaf3de;color:#27500a}.cal-chip.partial{background:#faeeda;color:#633806}.cal-chip.dropped{background:#fcebeb;color:#791f1f}.cal-foot{justify-content:flex-end}`;
+ if(typeof document==='object'&&document.head){const st=document.createElement('style');st.textContent=css;document.head.appendChild(st)}})();
+const RESOURCE_KIND_TEXT={presentation:'Presentación',pdf:'PDF',document:'Documento',sheet:'Hoja de cálculo',image:'Imagen',video:'Vídeo',audio:'Audio',file:'Archivo',folder:'Carpeta',note:'Nota',canva:'Canva',genially:'Genially',cloud:'En la nube',aules:'Aules',web:'Enlace web'};
+const RESOURCE_FILE='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5';
+const RESOURCE_ICONS={presentation:'M3 4h18 M4 4v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4 M12 16v4 M9 20h6 M8 12l3-3 2 2 3-3',pdf:RESOURCE_FILE+' M9 13h6 M9 17h4',
+ document:RESOURCE_FILE+' M9 9h1 M9 13h6 M9 17h6',sheet:RESOURCE_FILE+' M8 11h8v7H8z M8 14.5h8 M12 11v7',file:RESOURCE_FILE,image:'M4 5h16v14H4z M4 16l5-5 4 4 2-2 5 5 M15 9h.01',
+ audio:'M9 18V6l10-2v12 M9 18a3 3 0 1 1-3-3 3 3 0 0 1 3 3z M19 16a3 3 0 1 1-3-3 3 3 0 0 1 3 3z',folder:'M4 5h5l2 2h9a1 1 0 0 1 1 1v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a1 1 0 0 1 1-1z',
+ video:'M2 8a4 4 0 0 1 4-4h12a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4z M10 9l5 3-5 3z',web:'M10 14a3.5 3.5 0 0 0 5 0l4-4a3.5 3.5 0 0 0-5-5l-.5.5 M14 10a3.5 3.5 0 0 0-5 0l-4 4a3.5 3.5 0 0 0 5 5l.5-.5',
+ cloud:'M7 18a4.5 4.5 0 0 1-.5-9A6 6 0 0 1 18 9a4 4 0 0 1-1 9z',canva:'M12 21a9 9 0 1 1 9-9c0 2-1.5 3-3.5 3H15a1.5 1.5 0 0 0-1 2.6A1.4 1.4 0 0 1 12 21z M7.5 10.5h.01 M12 7.5h.01 M16.5 10.5h.01',
+ aules:'M3 10l9-5 9 5-9 5z M7 12v5c3 2 7 2 10 0v-5',note:'M5 4h14v12l-4 4H5z M15 20v-4h4 M8 9h8 M8 13h5',edit:'M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4',calendar:'M4 6h16v14H4z M4 10h16 M8 3v4 M16 3v4'};
+RESOURCE_ICONS.genially=RESOURCE_ICONS.canva;
+const RESOURCE_MISSING=new Map(); // id -> true cuando el archivo o la carpeta no se encuentra
+function resourceIcon(name,extra=''){return `<svg class="res-ico ${extra}" viewBox="0 0 24 24" aria-hidden="true"><path d="${RESOURCE_ICONS[name]||RESOURCE_FILE}"/></svg>`}
+function resourceDesktop(){return typeof window.desktopAPI?.abrirRecurso==='function'}
+function resourceBase(c=course()){return c?.resources?.base||''}
+function resourceOwnerName(c,owner){
+ if(owner==='course')return 'Material de la materia';
+ const sd=c.sdas.find(x=>x.id===owner);if(sd)return 'Material · '+calendarBlockName(c,sd.id);
+ for(const block of c.sdas){const se=block.sessions.find(x=>x.id===owner);if(se)return 'Material · '+calendarSessionName(c,{blockId:block.id,block:block.title,num:se.num,title:se.title})}
+ return 'Material';
+}
+async function resourceChange(change,label){
+ const pending=await saveQueue;
+ if(pending?.ok===false||EDIT_PENDING){alert('Completa o reintenta el guardado pendiente antes de continuar.');return {ok:false}}
+ try{
+  const candidate=deep(APP),target=candidate.courses.find(x=>x.id===APP.selectedCourseId);
+  if(!target)throw new Error('No hay ninguna materia seleccionada.');
+  target.resources=target.resources||ResourceModel.blank();change(target,candidate);ResourceModel.prune(target);
+  if(!target.resources.base&&!Object.keys(target.resources.items).length)delete target.resources;
+  ResourceModel.validate(target.resources);
+  if(dataFingerprint(candidate)===dataFingerprint(APP))return {ok:true};
+  return importJson(JSON.stringify(candidate),'all',{label});
+ }catch(e){alert(e.message);return {ok:false,error:e.message}}
+}
+function resourceUsable(item){return item.kind==='url'||item.kind==='note'||resourceDesktop()}
+// Nombre limpio: el puesto por el docente o el del archivo sin extensión.
+function resourceTitle(item){if(item.label&&item.label.trim())return item.label.trim();const n=ResourceModel.displayName(item);return item.kind==='file'?n.replace(/\.[a-z0-9]{1,5}$/i,''):n}
+// Línea secundaria: tipo y carpeta que lo contiene (la ruta completa queda en el texto emergente).
+function resourceSubtitle(item){
+ const f=ResourceModel.flavor(item),type=RESOURCE_KIND_TEXT[f]||'Archivo';
+ if(item.kind==='file'||item.kind==='folder'){const parts=String(item.target).split(/[\\/]/).filter(Boolean);const parent=parts.length>1?parts[parts.length-2]:'';return parent?type+' · '+parent:type}
+ if(item.kind==='url'){try{return type+' · '+new URL(item.target).hostname.replace(/^www\./,'')}catch{return type}}
+ return type;
+}
+function resourceTooltip(c,item){return item.kind==='file'||item.kind==='folder'?ResourceModel.join(resourceBase(c),item.target):item.kind==='url'?item.target:''}
+// Mosaico para consultar y abrir (Sesión de hoy y ficha de la sesión).
+function resourceTile(c,owner,item){
+ const f=ResourceModel.flavor(item),title=resourceTitle(item),missing=RESOURCE_MISSING.get(item.id),usable=resourceUsable(item);
+ const action=item.kind==='note'?`showResourceNote(${jsArg(owner)},${jsArg(item.id)})`:usable?`openResource(${jsArg(owner)},${jsArg(item.id)})`:'';
+ return `<button type="button" class="res-tile ${item.primary?'primary':''} ${item.kind==='note'?'note':''} ${missing?'missing':''}" data-res="${esc(item.id)}" title="${esc(resourceTooltip(c,item)||title)}" aria-label="${item.kind==='note'?'Ver':'Abrir'} ${esc(title)}" ${action?`onclick="${action}"`:'disabled'}>
+  ${resourceIcon(f,'res-f-'+f)}<span class="res-title">${esc(item.kind==='note'?item.target.slice(0,90):title)}</span>
+  <span class="res-sub">${esc(item.kind==='note'?'Nota':resourceSubtitle(item))}${item.primary?' · principal':''}${!usable?' · solo escritorio':''}</span>${missing?'<span class="res-missing">No se encuentra</span>':''}</button>`;
+}
+function resourceTilesHtml(c,owner,empty='Sin material vinculado.'){
+ const l=ResourceModel.list(c,owner);
+ return l.length?`<div class="res-grid" role="group" aria-label="${esc(resourceOwnerName(c,owner))}">${l.map(item=>resourceTile(c,owner,item)).join('')}</div>`:`<p class="muted tiny">${esc(empty)}</p>`;
+}
+// Fila compacta del editor: abrir siempre visible; el resto de acciones en el menú «⋯».
+function resourceRow(c,owner,item,index,total){
+ const f=ResourceModel.flavor(item),title=resourceTitle(item),missing=RESOURCE_MISSING.get(item.id),usable=resourceUsable(item);
+ const open=item.kind==='note'?`<button class="btn small" aria-label="Ver ${esc(title)}" onclick="showResourceNote(${jsArg(owner)},${jsArg(item.id)})">Ver</button>`
+  :usable?`<button class="btn small" aria-label="Abrir ${esc(title)}" onclick="openResource(${jsArg(owner)},${jsArg(item.id)})">Abrir</button>`:'<span class="tiny muted">Solo escritorio</span>';
+ const menu=`<details class="res-menu"><summary role="button" aria-label="Más acciones de ${esc(title)}">⋯</summary><div class="res-menu-box">
+  <label>Nombre<input type="text" maxlength="200" value="${esc(item.label||'')}" placeholder="${esc(title)}" aria-label="Nombre de ${esc(title)}" onchange="resourceRename(${jsArg(owner)},${jsArg(item.id)},this.value)"></label>
+  ${item.kind==='note'?'':`<button class="btn small" onclick="resourceSetPrimary(${jsArg(owner)},${jsArg(item.id)})">${item.primary?'Quitar como principal':'Marcar como principal (Proyectar)'}</button>`}
+  <button class="btn small" aria-label="Subir ${esc(title)}" ${index===0?'disabled':''} onclick="resourceMove(${jsArg(owner)},${jsArg(item.id)},-1)">↑ Subir</button>
+  <button class="btn small" aria-label="Bajar ${esc(title)}" ${index===total-1?'disabled':''} onclick="resourceMove(${jsArg(owner)},${jsArg(item.id)},1)">↓ Bajar</button>
+  <button class="btn small danger" aria-label="Quitar ${esc(title)}" onclick="resourceRemove(${jsArg(owner)},${jsArg(item.id)})">Quitar</button></div></details>`;
+ return `<li class="res-row ${missing?'missing':''}" data-res="${esc(item.id)}">${resourceIcon(f,'res-f-'+f)}<div class="res-main"><div class="res-title">${esc(item.kind==='note'?item.target.slice(0,120):title)}${item.primary?'<span class="res-pill">Principal</span>':''}</div>
+  <div class="res-sub" title="${esc(resourceTooltip(c,item))}">${esc(item.kind==='note'?'Nota':resourceSubtitle(item))}</div>${missing?'<div class="res-missing">No se encuentra en esta ruta: revisa la carpeta base o vuelve a vincularlo.</div>':''}</div>${open}${menu}</li>`;
+}
+function resourceListHtml(c,owner){
+ const l=ResourceModel.list(c,owner);
+ if(!l.length)return '<p class="muted tiny">Todavía no hay material. Añádelo con las opciones de abajo.</p>';
+ return `<ul class="res-rows" aria-label="${esc(resourceOwnerName(c,owner))}">${l.map((item,i)=>resourceRow(c,owner,item,i,l.length)).join('')}</ul>`;
+}
+// Comprueba en segundo plano si archivos y carpetas siguen en su sitio y marca los que faltan.
+async function resourceCheck(c,owners){
+ if(typeof window.desktopAPI?.comprobarRecursos!=='function')return;
+ const items=owners.flatMap(o=>ResourceModel.list(c,o)).filter(x=>x.kind==='file'||x.kind==='folder');if(!items.length)return;
+ const result=await window.desktopAPI.comprobarRecursos({base:resourceBase(c),items:items.map(({kind,target})=>({kind,target}))});
+ if(!result?.ok)return;
+ items.forEach((item,i)=>{const missing=!result.exists[i];RESOURCE_MISSING.set(item.id,missing);if(!missing)return;
+  document.querySelectorAll(`[data-res="${CSS.escape(item.id)}"]`).forEach(el=>{if(el.classList.contains('missing'))return;el.classList.add('missing');
+   if(el.classList.contains('res-tile'))el.insertAdjacentHTML('beforeend','<span class="res-missing">No se encuentra</span>');
+   else el.querySelector('.res-main')?.insertAdjacentHTML('beforeend','<div class="res-missing">No se encuentra en esta ruta: revisa la carpeta base o vuelve a vincularlo.</div>')})});
+}
+function resourceFind(c,owner,id){return ResourceModel.list(c,owner).find(x=>x.id===id)}
+async function openResource(owner,id){
+ const c=course(),item=resourceFind(c,owner,id);if(!item)return {ok:false};
+ if(item.kind==='note')return showResourceNote(owner,id);
+ if(!resourceDesktop()){if(item.kind==='url'){window.open(item.target,'_blank','noopener');return {ok:true}}alert('La versión web solo puede abrir enlaces (Drive, OneDrive, Canva…).');return {ok:false}}
+ const result=await window.desktopAPI.abrirRecurso({kind:item.kind,base:resourceBase(c),target:item.target});
+ if(!result?.ok){if(result?.missing){RESOURCE_MISSING.set(item.id,true)}alert(result?.error||'No se ha podido abrir.')}
+ return result;
+}
+function showResourceNote(owner,id){const item=resourceFind(course(),owner,id);if(!item)return;const back=RESOURCE_EDITOR!==null?`openResourcesEditor(${jsArg(RESOURCE_EDITOR)})`:'closeModal()';openModal(`<h2>Nota</h2><div class="card" style="white-space:pre-wrap">${esc(item.target)}</div><div class="toolbar"><button class="btn" onclick="${back}">Cerrar</button></div>`);return {ok:true}}
+// Editor del material de un propietario (materia, SDA o sesión).
+let RESOURCE_EDITOR=null;
+function openResourcesEditor(owner){
+ RESOURCE_EDITOR=owner;const c=course(),base=resourceBase(c),desktop=resourceDesktop();
+ const isCourse=owner==='course';
+ openModal(`<h2>${esc(resourceOwnerName(c,owner))}</h2>
+ ${isCourse?resourceBaseHtml(c):desktop&&!base?`<div class="res-basebox"><b>Esta materia no tiene carpeta base.</b> <span class="tiny">Es la carpeta que contiene las carpetas de tus SDA (por ejemplo «Econo empresa 2n batx 26.27»). Con ella, los enlaces siguen funcionando si cambias de ordenador o de curso, y puedes vincular las presentaciones automáticamente.</span><div class="toolbar"><button class="btn small primary" onclick="resourcePickBase()">Elegir carpeta base</button></div></div>`:''}
+ <div id="resourceEditorList">${resourceListHtml(c,owner)}</div>
+ <h3>Añadir material</h3>
+ ${desktop?`<div class="toolbar"><button class="btn" onclick="resourcePick(${jsArg(owner)},'file')">${resourceIcon('file')} Añadir archivos</button><button class="btn" onclick="resourcePick(${jsArg(owner)},'folder')">${resourceIcon('folder')} Añadir carpeta</button></div>`
+  :'<p class="notice">En la versión web, el material funciona si está en la nube: Google Drive, OneDrive, Canva, Genially, Aules, YouTube… Copia el enlace de compartir y pégalo aquí.</p>'}
+ <div class="res-add">
+  <fieldset><legend>${resourceIcon('web','res-f-web')} Enlace web</legend><label>Dirección<input type="text" inputmode="url" id="resourceUrl" placeholder="https://www.canva.com/…" maxlength="2000"></label><label>Nombre (opcional)<input type="text" id="resourceUrlLabel" maxlength="200" placeholder="Presentación en Canva"></label><button class="btn small" onclick="resourceAddUrl(${jsArg(owner)})">Añadir enlace</button></fieldset>
+  <fieldset><legend>${resourceIcon('note','res-f-note')} Nota breve</legend><label>Texto<textarea id="resourceNote" rows="3" maxlength="2000" placeholder="Página 77 del libro · llevar calculadoras"></textarea></label><button class="btn small" onclick="resourceAddNote(${jsArg(owner)})">Añadir nota</button></fieldset>
+ </div>
+ <div id="resourceEditorError" role="alert"></div>
+ <div class="toolbar"><button class="btn primary" onclick="closeModal();RESOURCE_EDITOR=null;render()">Hecho</button></div>`);
+ resourceCheck(c,[owner]);
+}
+function resourceBaseHtml(c){
+ const base=resourceBase(c),desktop=resourceDesktop();
+ if(!desktop)return '';
+ return `<div class="${base?'card':'res-basebox'}"><h3>${resourceIcon('folder','res-f-folder')} Carpeta base de la materia</h3><p class="tiny">La carpeta que contiene las carpetas de tus SDA (por ejemplo «Econo empresa 2n batx 26.27»). Los archivos de dentro se guardan con su ruta relativa: si cambias de ordenador o copias la carpeta al curso siguiente, solo tienes que cambiar la carpeta base.</p>
+ <p>${base?`<code>${esc(base)}</code>`:'<b>Sin carpeta base.</b>'}</p>
+ <div class="toolbar"><button class="btn ${base?'':'primary'}" onclick="resourcePickBase()">${base?'Cambiar carpeta base':'Elegir carpeta base'}</button>${base?`<button class="btn" onclick="openResourceBase()">Abrir carpeta base</button><button class="btn primary" onclick="resourceAutoLink()">Vincular presentaciones automáticamente</button>`:''}</div>
+ ${base?'<p class="tiny muted">«Vincular automáticamente» busca en cada carpeta de SDA los archivos «05. Sesión 5», «01-02. Sesiones 1 y 2» e «00. Introducción». Antes de aplicar, te muestra qué va a vincular. No sustituye material ya vinculado.</p>':''}</div>
+ <h3>Material general de la materia</h3><p class="tiny muted">Programación, libro, criterios… lo que quieras tener a mano en cualquier clase.</p>`;
+}
+async function resourceRefreshEditor(){if(RESOURCE_EDITOR!==null&&document.getElementById('resourceEditorList'))openResourcesEditor(RESOURCE_EDITOR)}
+async function resourceAddItems(owner,items,label){
+ const result=await resourceChange(c=>{const l=c.resources.items[owner]||(c.resources.items[owner]=[]);
+  if(l.length+items.length>ResourceModel.LIMITS.items)throw new Error('Como máximo '+ResourceModel.LIMITS.items+' elementos.');
+  items.forEach(item=>{if(item.primary&&l.some(x=>x.primary))item={...item,primary:false};if(item.kind!=='note'&&!l.some(x=>x.primary)&&owner!=='course'&&!l.length)item={...item,primary:true};l.push({id:ResourceModel.newId(),label:'',...item})})},label);
+ if(result.ok)resourceRefreshEditor();return result;
+}
+async function resourcePick(owner,kind){
+ const c=course(),base=resourceBase(c),result=await window.desktopAPI.elegirRecurso({kind,base});
+ if(!result?.ok){if(result?.error)alert(result.error);return result||{ok:false}}
+ if(result.canceled)return result;
+ // Sin carpeta base: si la carpeta elegida contiene las carpetas de las SDA, se propone como carpeta base.
+ if(kind==='folder'&&!base&&ResourceModel.isAbsolute(result.paths[0])&&typeof window.desktopAPI.explorarCarpetaBase==='function'){
+  const listing=await window.desktopAPI.explorarCarpetaBase(result.paths[0]);
+  const matches=listing?.ok?ResourceModel.proposeLinks(c,listing.folders).proposals.filter(p=>p.folder).length:0;
+  if(matches>=Math.min(2,c.sdas.length)&&matches>0){RESOURCE_PENDING_FOLDER={owner,path:result.paths[0]};
+   openModal(`<h2>¿Es la carpeta de la materia?</h2><p>«${esc(result.names[0])}» contiene las carpetas de ${matches} ${matches===1?'situación de aprendizaje':'situaciones de aprendizaje'} de esta materia. Parece la <b>carpeta base</b>: la que permite guardar rutas relativas y vincular las presentaciones automáticamente.</p>
+   <div class="toolbar"><button class="btn primary" onclick="resourceUsePendingAsBase()">Usarla como carpeta base</button><button class="btn" onclick="resourceAddPendingFolder()">Añadirla solo como material</button></div>`);
+   return {ok:true,proposedBase:true}}
+ }
+ return resourceAddItems(owner,result.paths.map(target=>({kind,target})),kind==='folder'?'añadir carpeta al material':'añadir archivos al material');
+}
+let RESOURCE_PENDING_FOLDER=null;
+async function resourceUsePendingAsBase(){const p=RESOURCE_PENDING_FOLDER;if(!p)return {ok:false};RESOURCE_PENDING_FOLDER=null;RESOURCE_EDITOR='course';return resourceSetBase(p.path)}
+async function resourceAddPendingFolder(){const p=RESOURCE_PENDING_FOLDER;if(!p)return {ok:false};RESOURCE_PENDING_FOLDER=null;RESOURCE_EDITOR=p.owner;openResourcesEditor(p.owner);return resourceAddItems(p.owner,[{kind:'folder',target:p.path}],'añadir carpeta al material')}
+function resourceAddUrl(owner){
+ const url=document.getElementById('resourceUrl').value.trim(),label=document.getElementById('resourceUrlLabel').value.trim();
+ const error=document.getElementById('resourceEditorError');
+ if(!ResourceModel.isUrl(url)){error.textContent='Escribe una dirección completa que empiece por https:// (cópiala del navegador o del botón «Compartir»).';return {ok:false}}
+ return resourceAddItems(owner,[{kind:'url',target:url,label}],'añadir enlace al material');
+}
+function resourceAddNote(owner){
+ const text=document.getElementById('resourceNote').value.trim();
+ if(!text){document.getElementById('resourceEditorError').textContent='Escribe el texto de la nota.';return {ok:false}}
+ return resourceAddItems(owner,[{kind:'note',target:text}],'añadir nota al material');
+}
+async function resourceEdit(owner,id,change,label){const r=await resourceChange(c=>{const l=c.resources.items[owner]||[];const i=l.findIndex(x=>x.id===id);if(i<0)throw new Error('Ese elemento ya no existe.');change(l,i)},label);if(r.ok)resourceRefreshEditor();return r}
+function resourceRename(owner,id,label){return resourceEdit(owner,id,(l,i)=>{const v=String(label).trim().slice(0,200);if(v)l[i].label=v;else l[i].label=''},'renombrar material')}
+function resourceMove(owner,id,delta){return resourceEdit(owner,id,(l,i)=>{const j=i+delta;if(j<0||j>=l.length)return;[l[i],l[j]]=[l[j],l[i]]},'ordenar material')}
+function resourceSetPrimary(owner,id){return resourceEdit(owner,id,(l,i)=>{const on=!l[i].primary;l.forEach(x=>delete x.primary);if(on)l[i].primary=true},'material principal')}
+function resourceRemove(owner,id){return resourceEdit(owner,id,(l,i)=>{l.splice(i,1)},'quitar material')}
+async function resourcePickBase(){
+ const result=await window.desktopAPI.elegirRecurso({kind:'base',base:resourceBase()});
+ if(!result?.ok){if(result?.error)alert(result.error);return result||{ok:false}}if(result.canceled)return result;
+ return resourceSetBase(result.paths[0]);
+}
+async function resourceSetBase(base){
+ const old=resourceBase();
+ const r=await resourceChange(c=>{
+  // Las rutas absolutas que queden dentro de la nueva base pasan a relativas.
+  for(const l of Object.values(c.resources.items))l.forEach(x=>{if((x.kind==='file'||x.kind==='folder')&&ResourceModel.isAbsolute(x.target))x.target=ResourceModel.relativize(base,x.target)});
+  c.resources.base=base},old?'cambiar carpeta base':'elegir carpeta base');
+ if(r.ok){RESOURCE_MISSING.clear();if(RESOURCE_EDITOR!==null)openResourcesEditor(RESOURCE_EDITOR)}return r;
+}
+async function openResourceBase(){const r=await window.desktopAPI.abrirRecurso({kind:'folder',base:'',target:resourceBase()});if(!r?.ok)alert(r?.error||'No se ha podido abrir.');return r}
+let RESOURCE_PROPOSAL=null;
+async function resourceAutoLink(){
+ const c=course(),listing=await window.desktopAPI.explorarCarpetaBase(resourceBase(c));
+ if(!listing?.ok){alert(listing?.error||'No se ha podido leer la carpeta base.');return listing||{ok:false}}
+ RESOURCE_PROPOSAL=ResourceModel.proposeLinks(c,listing.folders);
+ const {proposals,warnings}=RESOURCE_PROPOSAL,total=proposals.reduce((n,p)=>n+p.items.length,0);
+ openModal(`<h2>Vincular presentaciones automáticamente</h2>
+ <p>Desmarca las que no quieras vincular todavía (por ejemplo, unidades que vas a rehacer). Nada se guarda hasta que pulses «Vincular».</p>
+ ${proposals.map(p=>`<div class="card res-proposal"><label class="checkpill"><input type="checkbox" name="resourceProposal" value="${esc(p.blockId)}" ${p.items.length?'checked':'disabled'}> <b>${esc(calendarBlockName(c,p.blockId))}</b></label>
+  <div class="tiny muted">${p.folder?'Carpeta: '+esc(p.folder):'Sin carpeta'} · ${p.items.length} ${p.items.length===1?'enlace nuevo':'enlaces nuevos'}</div>
+  ${p.items.length?`<ul class="tiny">${p.items.map(({owner,item})=>`<li>${esc(resourceOwnerName(c,owner).replace(/^Material · /,''))}: ${esc(item.target)}</li>`).join('')}</ul>`:''}
+  ${warnings.filter(w=>w.blockId===p.blockId).map(w=>`<div class="tiny res-missing">${esc(w.message)}</div>`).join('')}</div>`).join('')}
+ <div class="toolbar"><button class="btn primary" ${total?'':'disabled'} onclick="resourceApplyAutoLink()">Vincular</button><button class="btn" onclick="RESOURCE_PROPOSAL=null;openResourcesEditor('course')">Volver</button></div>`);
+ return {ok:true,total};
+}
+async function resourceApplyAutoLink(){
+ if(!RESOURCE_PROPOSAL)return {ok:false};
+ const accepted=[...document.querySelectorAll('input[name="resourceProposal"]:checked')].map(x=>x.value),proposal=RESOURCE_PROPOSAL;
+ if(!accepted.length){alert('Marca al menos una.');return {ok:false}}
+ const r=await resourceChange(c=>{ResourceModel.applyLinks(c,proposal.proposals,accepted)},'vincular presentaciones automáticamente');
+ if(r.ok){RESOURCE_PROPOSAL=null;closeModal();render()}return r;
+}
+// Botón compacto con el número de elementos, para listas del calendario.
+function resourceButton(c,owner,label='Material'){const n=ResourceModel.count(c,owner);return `<button class="btn small" onclick="openResourcesEditor(${jsArg(owner)})" aria-label="${esc(label)}${n?' ('+n+')':''}">${esc(label)}${n?` <span class="res-count">(${n})</span>`:''}</button>`}
+// Material dentro de la ficha de una sesión del calendario: abrir y editar.
+function resourceSessionSection(c,sessionId){
+ return `<div class="res-session"><h4>Material de la sesión</h4>${resourceTilesHtml(c,sessionId)}<button class="res-linkbtn" onclick="openResourcesEditor(${jsArg(sessionId)})">${resourceIcon('edit')} Editar material</button></div>`;
+}
+// Tarjeta «Sesión de hoy» (o próxima clase) en el Calendario.
+function resourceTodayHtml(c,next,today){
+ if(!next)return '';
+ const isToday=next.dates.includes(today),blockId=next.blockId,sessionId=next.sessionId,day=isToday?today:next.dates.find(d=>d>=today);
+ const main=ResourceModel.primary(c,sessionId),sessionItems=ResourceModel.list(c,sessionId),blockItems=ResourceModel.list(c,blockId);
+ const tracking=c.calendar?.tracking?.[sessionId]||{},sd=c.sdas.find(x=>x.id===blockId),se=sd?.sessions.find(x=>x.id===sessionId);
+ const label=`${c.structure?levelName(c,1)+' ':'S'}${next.num}${se?.title?' · '+se.title:''}`;
+ return `<div class="card res-today" id="sessionToday"><div class="res-today-head"><div><p class="res-kicker">${resourceIcon('calendar')} ${isToday?'Sesión de hoy':'Próxima clase'} · ${esc(calendarDate(day,true))}</p>
+ <h2>${esc(label)}</h2><p class="res-kicker">${esc(calendarBlockName(c,blockId))}</p></div>
+ ${main&&resourceUsable(main)?`<button class="btn primary res-project" onclick="openResource(${jsArg(sessionId)},${jsArg(main.id)})">${resourceIcon('presentation')} Proyectar</button>`:''}</div>
+ ${tracking.comment?`<p class="tiny"><b>Comentarios:</b> ${esc(tracking.comment)}</p>`:''}
+ ${sessionItems.length?`<p class="tiny" style="margin:.6rem 0 0"><b>Material de la sesión</b></p>${resourceTilesHtml(c,sessionId)}`:'<p class="muted tiny">Esta sesión todavía no tiene material.</p>'}
+ <div class="res-foot">${blockItems.length?`<details><summary>${resourceIcon('folder','res-f-folder')} Material de ${esc(calendarBlockName(c,blockId))} (${blockItems.length})</summary>${resourceTilesHtml(c,blockId)}</details>`:''}
+ <button class="res-linkbtn" onclick="openResourcesEditor(${jsArg(sessionId)})">${resourceIcon('edit')} ${sessionItems.length?'Editar material de la sesión':'Añadir material a la sesión'}</button>
+ <button class="res-linkbtn" onclick="openCalendarSession(${jsArg(sessionId)})">Opciones de la sesión</button></div></div>`;
+}
 </script>
 <script>/* individual-ui.js */
 /* Renderer-only views; persistence and calculations are supplied by the existing app. */
@@ -2021,6 +2473,7 @@ function validateData(data) {
     IndividualModel.validate(c);
     CalendarModel.validateCourse(c.calendar);
     CalendarModel.validateEvaluations(c.evaluations, c);
+    ResourceModel.validate(c.resources);
     ['grades', 'rubricScores', 'comments', 'defaults', 'ui'].forEach(k => {
       requireValue(c[k] === undefined || object(c[k]), `${c.id}.${k}`);
     });
@@ -2179,7 +2632,7 @@ function normalizeApp(a){
       missing(ac,'criteria',[]);missing(ac,'factor',c.defaults.sdaFactor);missing(ac,'instrument','direct');missing(ac,'rubric',null);missing(ac,'recoveryOf',null);
     })})});
     validateStructure(c);validateEvaluationSelection(c);
-    IndividualModel.validate(c);
+    IndividualModel.validate(c);ResourceModel.validate(c.resources);
   }); return a;
 }
 function validateCourseArchive(c){if(c.archived!==undefined&&typeof c.archived!=='boolean')throw new Error('archived debe ser un booleano opcional.');}
@@ -2209,6 +2662,7 @@ function preflightImport(a){
     const p='courses['+i+']';check(object(c),p,'curso no válido');unique(courses,c.id,p+'.id');
     validateCourseArchive(c);
     IndividualModel.validate(c);
+    try{ResourceModel.validate(c.resources)}catch(e){check(false,p+'.resources',e.message)}
     try{validateStructure(c)}catch(e){check(false,p+'.structure',e.message)}
     const students=new Set(),criteria=new Set(),blocks=new Set(),sessions=new Set(),activities=new Map();
     list(c.students,p+'.students').forEach(st=>{check(object(st),p+'.students','alumno no válido');unique(students,st.id,p+'.students.id')});
@@ -3474,6 +3928,7 @@ function duplicateCourse(source,name){
    r.evidence.observations.forEach(n=>{n.studentId=r.studentId;if(n.activityId)n.activityId=activityIds.get(n.activityId)||n.activityId;if(n.sessionId)n.sessionId=sessionIds.get(n.sessionId)||n.sessionId});
   });
  }
+ if(c.resources)c.resources=ResourceModel.remap(c.resources,[sessionIds,blockIds]);
  if(c.ui)for(const [key,map] of Object.entries({selectedSda:blockIds,bookSda:blockIds,structSda:blockIds,selectedSession:sessionIds,selectedActivity:activityIds}))if(c.ui[key])c.ui[key]=map.get(c.ui[key]);
  c.id=uid('course');c.name=name?.trim()||source.name+' (copia)';return c;
 }
@@ -3965,8 +4420,10 @@ const PAGES = {
       `<b>Calendario del centro</b> (una sola vez por curso escolar, sirve para todas tus materias): ${T('Introducir calendario del centro')} → ${T('Formato para IA')} → pégalo en una IA y adjunta el calendario oficial (PDF o imagen) → pega aquí el JSON que te devuelva → ${P('Validar y guardar')}.`,
       `<b>Configurar grupo</b>: marca los días de la semana con clase, el último día de clase y los días de margen al final (exámenes, recuperaciones).`,
       'La app coloca cada sesión en una fecha y te avisa de si terminarás a tiempo.',
-      'Cuando pasen las clases, confirma qué se hizo: hecha, «Parcial», «No hubo clase» o «Clase dedicada a otra actividad» (hubo clase, pero se dedicó a corregir, repasar o a un imprevisto).'],
-    note: ['«No hubo clase» y «Clase dedicada a otra actividad» retrasan una clase todas las sesiones siguientes; el seguimiento las cuenta por separado. Escribe en Motivo qué pasó. «Parcial» hace que esa sesión continúe en la clase siguiente.', 'Las notas de seguimiento te sirven para revisar la programación el curso que viene.'] },
+      'Cuando pasen las clases, confirma qué se hizo: hecha, «Parcial», «No hubo clase» o «Clase dedicada a otra actividad» (hubo clase, pero se dedicó a corregir, repasar o a un imprevisto).',
+      `<b>Material</b>: en cada sesión (botón «Material» o «Editar material») y en cada SDA puedes guardar enlaces a tu material y notas breves. La <b>Sesión de hoy</b>, arriba del Calendario, muestra la sesión que toca con su material; el botón ${P('Proyectar')} abre el elemento marcado como principal.`,
+      'Para que el material funcione en la versión web, tiene que estar <b>en la nube</b>: Google Drive, OneDrive, Canva, Genially, Aules, YouTube… Abre el archivo o la carpeta en la nube, pulsa «Compartir» → «Copiar enlace» y pégalo en «Enlace web». Organiza el material en carpetas por SDA y vincula cada sesión con su presentación: al abrir la sesión del día tendrás todo a un clic.'],
+    note: ['«No hubo clase» y «Clase dedicada a otra actividad» retrasan una clase todas las sesiones siguientes; el seguimiento las cuenta por separado. Escribe en Motivo qué pasó. «Parcial» hace que esa sesión continúe en la clase siguiente.', 'Las notas de seguimiento te sirven para revisar la programación el curso que viene.', 'Material: comprueba los permisos del enlace. Un enlace de la cuenta de la Conselleria puede pedir iniciar sesión; funcionará en tu equipo, pero quizá no en el ordenador del aula si no has iniciado sesión allí. No compartas de forma pública material con datos del alumnado (listas, notas, fotos).', 'Los archivos y carpetas vinculados en la versión de escritorio aparecen como «Solo escritorio»: se conservan en las copias, pero el navegador no puede abrir archivos del ordenador.'] },
   Cuaderno: { title: 'Cuaderno', what: 'Vista de tabla, como el Excel de siempre: todas las notas del grupo por actividad.', steps: [
       'Elige el bloque (unidad/SDA) que quieres ver.',
       'Pulsa una celda para ir a evaluar a ese alumno en esa actividad.'],

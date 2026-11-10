@@ -1,4 +1,4 @@
-CUADERNO DE EVALUACIÓN · VERSIÓN WEB (generada desde la versión de escritorio 1.7.3)
+CUADERNO DE EVALUACIÓN · VERSIÓN WEB (generada desde la versión de escritorio 1.8.0)
 ==================================================================================
 
 QUÉ ES
@@ -41,3 +41,12 @@ LISTA DE COTEJO CON ÍTEMS
 Desde la versión de escritorio 1.7.3 la lista de cotejo con ítems y escalas forma parte del código
 de escritorio, así que se conserva al regenerar index.html desde escritorio.
 parches-web/aplicar-lista-cotejo.py queda solo como respaldo: si el cambio ya está, no hace nada.
+
+MATERIAL DE LA SESIÓN (1.8.0)
+En el Calendario, cada sesión y cada SDA tienen «Material»: enlaces web (Drive, OneDrive, Canva, Genially,
+Aules, YouTube…) y notas breves. «Sesión de hoy» muestra la sesión que toca con su material y el botón Proyectar.
+En la web el material tiene que estar en la nube (enlace de compartir). Los archivos y carpetas del ordenador
+solo se abren en la versión de escritorio; en la web aparecen como «Solo escritorio» y se conservan en las copias.
+Para regenerar desde escritorio: python3 parches-web/aplicar-recursos-1.8.0.py RUTA/version-escritorio
+(y después python3 tutorial/aplicar-tutorial.py). Si el escritorio ya incluye el material en su código,
+el script solo actualiza esos bloques.
