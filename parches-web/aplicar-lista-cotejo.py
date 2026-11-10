@@ -44,6 +44,7 @@ function openChecklistEditor(aid){
  openModal(`<div class="row"><h2>Lista de cotejo · ${esc(ac.name)}</h2><button class="btn small right" onclick="closeModal();render()">Cerrar</button></div>
  ${ac.rubric?`<label>Nombre de la lista <input aria-label="Nombre de la lista de cotejo" value="${esc(ac.rubric.name||ac.name)}" onchange="editRubricName(${jsArg(aid)},this.value)"></label>`:''}
  <div class="card" style="margin:10px 0"><div><b>Escala</b>: ${scale?checklistScaleText(scale.levels):'<span class="muted">elige una escala para empezar.</span>'}</div>${scale&&!scale.uniform?'<div class="notice warn">Los ítems tienen escalas distintas. Si eliges una escala, todos los ítems pasan a usarla.</div>':''}<div class="toolbar">${presets}</div>${scored?'<div class="tiny muted">Ya hay alumnado evaluado con esta lista: la escala no se puede cambiar para no alterar sus notas.</div>':''}${CK_CUSTOM?.aid===aid?checklistCustomEditor():''}</div>
+ ${rows.some(r=>!r.criterion||!ac.criteria.includes(r.criterion))?`<div class="notice warn">${rows.filter(r=>!r.criterion||!ac.criteria.includes(r.criterion)).length} ítem(s) sin criterio: no cuentan para ninguna nota. Elige su criterio en el desplegable.</div>`:''}
  ${rows.length&&missing.length?`<div class="notice warn">Falta al menos un ítem con peso para: ${missing.map(code=>esc(criterionLabel(c,code))).join(', ')}. Hasta completarlo, la actividad no se puede evaluar.</div>`:''}
  ${rows.length&&checklistHasDirectGrades(c,aid)?'<div class="notice">Esta actividad ya tenía notas directas. Se conservan y, en cada criterio, siguen contando hasta que marques algún ítem de ese criterio para esa persona.</div>':''}
  ${rows.length?'<div class="notice">Cada ítem se vincula a un criterio de la actividad. La nota de cada criterio es la media de sus ítems (ponderada por el peso).</div>':'<div class="notice">Mientras la lista no tenga ítems, la actividad se califica con nota directa.</div>'}
@@ -160,6 +161,9 @@ rep('editor: borrar ítem',
 rep('calificar: botón de nivel',
     "><b>${String(l.value).replace('.',',')}</b>${l.label?`<div>${esc(l.label)}</div>`:''}<div class=\"tiny\">${esc(l.description)}</div></button>",
     ">${isChecklist(ac)&&l.label?`<b>${esc(l.label)}</b><div class=\"tiny\">${String(l.value).replace('.',',')}</div>`:`<b>${String(l.value).replace('.',',')}</b>${l.label?`<div>${esc(l.label)}</div>`:''}<div class=\"tiny\">${esc(l.description)}</div>`}</button>")
+rep('calificar: ítem sin criterio',
+    "<b>${esc(r.label)}</b><span class=\"pill\">${esc(criterionLabel(c,r.criterion))}</span>",
+    "<b>${esc(r.label)}</b>${r.criterion&&ac.criteria.includes(r.criterion)?`<span class=\"pill\">${esc(criterionLabel(c,r.criterion))}</span>`:'<span class=\"pill\" style=\"background:#fef3c7;color:#92400e\">Sin criterio: no cuenta</span>'}")
 rep('calificar: marcar todos',
     "<div style=\"margin:10px 0\">${scores}</div>${rows||",
     "<div style=\"margin:10px 0\">${scores}</div>${checklistBulkBar(ac,stuid,aid)}${rows||")
