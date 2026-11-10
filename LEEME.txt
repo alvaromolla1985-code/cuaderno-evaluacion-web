@@ -37,15 +37,7 @@ IMPORTANTE: si vuelves a generar index.html desde la versión de escritorio, el 
 Después de regenerar, ejecuta en esta carpeta:  python3 tutorial/aplicar-tutorial.py
 (lo vuelve a insertar sin duplicarlo y renueva la caché de sw.js). Luego sube los cambios.
 
-LISTA DE COTEJO CON ÍTEMS (SOLO VERSIÓN WEB)
-La web permite configurar la «Lista de cotejo» con ítems vinculados a criterios y una escala
-(Sí/No · Hecho/A medias/No hecho · Conseguido/En proceso/No conseguido · personalizada).
-Usa el motor de las rúbricas. Una lista de cotejo SIN ítems sigue funcionando como nota directa.
-El mismo script añade un aviso claro si se usa una copia completa en «Importar copia de materia».
-Su código está en parches-web/aplicar-lista-cotejo.py y NO forma parte de la versión de escritorio.
-IMPORTANTE:
-- Si vuelves a generar index.html desde la versión de escritorio, este cambio desaparece.
-  Después de regenerar y de aplicar el tutorial, ejecuta:  python3 parches-web/aplicar-lista-cotejo.py
-  Si el código de escritorio cambió, el script se detiene sin tocar nada e indica qué fragmento falla.
-- Una copia de la web con listas de cotejo con ítems se puede abrir en la versión de escritorio,
-  pero allí esas actividades se tratan como nota directa: las puntuaciones de los ítems no cuentan.
+LISTA DE COTEJO CON ÍTEMS
+Desde la versión de escritorio 1.7.3 la lista de cotejo con ítems y escalas forma parte del código
+de escritorio, así que se conserva al regenerar index.html desde escritorio.
+parches-web/aplicar-lista-cotejo.py queda solo como respaldo: si el cambio ya está, no hace nada.
